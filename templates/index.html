@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Inter-Rater Reliability Tool</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <section class="hero card">
+        <div>
+          <p class="eyebrow">Reliability analysis workspace</p>
+          <h1>Inter-Rater Reliability Tool</h1>
+          <p class="lede">
+            Upload CSV or XLSX data, scan worksheet headings, select reliability
+            pairs, confirm observations and raters, then calculate ICC, typical
+            error, descriptive summaries, and agreement plots.
+          </p>
+        </div>
+
+        <form method="post" enctype="multipart/form-data" class="upload-form">
+          <input type="hidden" name="action" value="upload" />
+          <label class="upload-box" for="dataset">
+            <span class="upload-title">Choose a dataset</span>
+            <span class="upload-note">Accepted formats: .csv and .xlsx</span>
+            <input id="dataset" name="dataset" type="file" accept=".csv,.xlsx" />
+          </label>
+          <button type="submit">Scan file</button>
+        </form>
+      </section>
+
+      {% if error %}
+      <section class="card message error">
+        <strong>Action needed</strong>
+        <p>{{ error }}</p>
+      </section>
+      {% endif %}
+
+      {% if upload %}
+      <section class="card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Uploaded dataset</p>
+            <h2>{{ upload.original_filename }}</h2>
+          </div>
+          <form method="get" class="compact-form">
+            <input type="hidden" name="upload_id" value="{{ upload.id }}" />
+            <label>
+              <span>Active worksheet</span>
+              <select name="sheet">
+                {% for sheet in upload.sheets %}
+                <option value="{{ sheet.name }}" {% if sheet.name == selected_sheet %}selected{% endif %}>{{ sheet.name }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <button type="submit">Load worksheet</button>
+          </form>
+        </div>
+
+        <div class="sheet-grid">
+          {% for sheet in upload.sheets %}
+          <article class="sheet-card {% if sheet.name == selected_sheet %}active{% endif %}">
+            <div class="sheet-title-row">
+              <h3>{{ sheet.name }}</h3>
+              {% if sheet.name == selected_sheet %}<span class="tag">Active</span>{% endif %}
+            </div>
+            <p>{{ sheet.row_count }} rows · {{ sheet.column_count }} columns · {{ sheet.numeric_columns|length }} numeric</p>
+            <div class="pill-list">
+              {% for column in sheet.columns[:8] %}
+              <span class="pill">{{ column }}</span>
+              {% endfor %}
+              {% if sheet.columns|length > 8 %}
+              <span class="pill muted">+{{ sheet.columns|length - 8 }} more</span>
+              {% endif %}
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Data preview</p>
+            <h2>{{ selected_sheet }}</h2>
+          </div>
+          <p class="subtle">Showing the first {{ preview_rows|length }} rows from the active worksheet.</p>
+        </div>
+
+        {% if preview_columns %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                {% for column in preview_columns %}
+                <th>{{ column }}</th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in preview_rows %}
+              <tr>
+                {% for column in preview_columns %}
+                <td>{{ row[column] if row[column] is not none else "" }}</td>
+                {% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <p class="subtle">No preview is available for the selected worksheet.</p>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Analysis setup</p>
+            <h2>Select columns and confirm the design</h2>
+          </div>
+          <p class="subtle">This build focuses on wide-format data with one numeric column per rater or occasion.</p>
+        </div>
+
+        <form method="post" class="analysis-form">
+          <input type="hidden" name="action" value="analyze" />
+          <input type="hidden" name="upload_id" value="{{ upload.id }}" />
+
+          <div class="field-grid">
+            <label>
+              <span>Worksheet</span>
+              <select name="sheet_name">
+                {% for sheet in upload.sheets %}
+                <option value="{{ sheet.name }}" {% if sheet.name == form_state.sheet_name %}selected{% endif %}>{{ sheet.name }}</option>
+                {% endfor %}
+              </select>
+            </label>
+
+            <label>
+              <span>Observation ID column</span>
+              <select name="subject_column">
+                <option value="" {% if not form_state.subject_column %}selected{% endif %}>Use generated row labels</option>
+                {% for column in form_state.available_columns %}
+                <option value="{{ column }}" {% if column == form_state.subject_column %}selected{% endif %}>{{ column }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          </div>
+
+          <fieldset>
+            <legend>Detected reliability pairs</legend>
+            {% if form_state.detected_pairs %}
+            <div class="pair-grid">
+              {% for pair in form_state.detected_pairs %}
+              <label class="pair-card">
+                <input type="radio" name="selected_pair_key" value="{{ pair.key }}" {% if pair.key == form_state.selected_pair_key %}checked{% endif %} />
+                <span class="pair-title">{{ pair.label }}</span>
+                <span class="pair-meta">{{ pair.test_1 }} ↔ {{ pair.test_2 }}</span>
+              </label>
+              {% endfor %}
+            </div>
+            <p class="subtle">For files like the sample workbook, pair selection overrides the manual X/Y plot columns below.</p>
+            {% else %}
+            <p class="subtle">No automatic Test 1/Test 2 pairs were detected in this worksheet.</p>
+            {% endif %}
+          </fieldset>
+
+          <fieldset>
+            <legend>Select measurement columns</legend>
+            <div class="checkbox-grid">
+              {% for column in form_state.numeric_columns %}
+              <label class="check-card">
+                <input type="checkbox" name="measurement_columns" value="{{ column }}" {% if column in form_state.measurement_columns %}checked{% endif %} />
+                <span>{{ column }}</span>
+              </label>
+              {% endfor %}
+            </div>
+          </fieldset>
+
+          <div class="field-grid">
+            <label>
+              <span>Primary plot X column</span>
+              <select name="primary_x_column">
+                {% for column in form_state.numeric_columns %}
+                <option value="{{ column }}" {% if column == form_state.primary_x_column %}selected{% endif %}>{{ column }}</option>
+                {% endfor %}
+              </select>
+            </label>
+
+            <label>
+              <span>Primary plot Y column</span>
+              <select name="primary_y_column">
+                {% for column in form_state.numeric_columns %}
+                <option value="{{ column }}" {% if column == form_state.primary_y_column %}selected{% endif %}>{{ column }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          </div>
+
+          <div class="field-grid three-up">
+            <label>
+              <span>Study design</span>
+              <select name="study_design">
+                <option value="one_way_random" {% if form_state.study_design == 'one_way_random' %}selected{% endif %}>One-way random</option>
+                <option value="two_way_random" {% if form_state.study_design == 'two_way_random' %}selected{% endif %}>Two-way random</option>
+                <option value="two_way_mixed" {% if form_state.study_design == 'two_way_mixed' %}selected{% endif %}>Two-way mixed</option>
+              </select>
+            </label>
+
+            <label>
+              <span>Agreement target</span>
+              <select name="agreement_definition">
+                <option value="absolute" {% if form_state.agreement_definition == 'absolute' %}selected{% endif %}>Absolute agreement</option>
+                <option value="consistency" {% if form_state.agreement_definition == 'consistency' %}selected{% endif %}>Consistency</option>
+              </select>
+            </label>
+
+            <label>
+              <span>Measurement unit</span>
+              <select name="measurement_unit">
+                <option value="single" {% if form_state.measurement_unit == 'single' %}selected{% endif %}>Single measurement</option>
+                <option value="average" {% if form_state.measurement_unit == 'average' %}selected{% endif %}>Average measurement</option>
+              </select>
+            </label>
+          </div>
+
+          <fieldset>
+            <legend>Figure output action</legend>
+            <div class="radio-row">
+              <label><input type="radio" name="figure_action" value="view" {% if form_state.figure_action == 'view' %}checked{% endif %} /> View only</label>
+              <label><input type="radio" name="figure_action" value="save" {% if form_state.figure_action == 'save' %}checked{% endif %} /> Save only</label>
+              <label><input type="radio" name="figure_action" value="both" {% if form_state.figure_action == 'both' %}checked{% endif %} /> View and save</label>
+            </div>
+            <p class="subtle">Figures are generated as SVG and PDF by default.</p>
+          </fieldset>
+
+          <button type="submit">Run reliability analysis</button>
+        </form>
+      </section>
+      {% endif %}
+
+      {% if analysis %}
+      <section class="card" id="results">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Analysis results</p>
+            <h2>{{ analysis.icc_result.model }}</h2>
+          </div>
+          <div class="actions-stack">
+            <p class="subtle">{{ analysis.recommendation.rationale }}</p>
+            <div class="download-actions">
+              <a class="download-link" href="{{ url_for('markdown_report', analysis_id=analysis.id) }}">Download Markdown report</a>
+              <a class="download-link secondary" href="{{ url_for('source_data_csv', analysis_id=analysis.id) }}">Download analysed source data (CSV)</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <article class="stat-card">
+            <span>ICC estimate</span>
+            <strong>{{ analysis.icc_result.estimate }}</strong>
+            <small>95% CI {{ analysis.icc_result.ci_lower }} to {{ analysis.icc_result.ci_upper }}</small>
+          </article>
+          <article class="stat-card">
+            <span>Observations</span>
+            <strong>{{ analysis.dataset_summary.observations }}</strong>
+            <small>{{ analysis.dataset_summary.dropped_rows }} rows removed for missing data</small>
+          </article>
+          <article class="stat-card">
+            <span>Raters / series</span>
+            <strong>{{ analysis.dataset_summary.raters }}</strong>
+            <small>ID column: {{ analysis.dataset_summary.subject_label }}</small>
+          </article>
+          <article class="stat-card">
+            <span>ICC family</span>
+            <strong>{{ analysis.recommendation.design_label }}</strong>
+            <small>{{ analysis.recommendation.agreement_label }} · {{ analysis.recommendation.measurement_label }}</small>
+          </article>
+          {% if analysis.config.selected_pair_label %}
+          <article class="stat-card">
+            <span>Selected pair</span>
+            <strong>{{ analysis.config.selected_pair_label }}</strong>
+            <small>{{ analysis.config.primary_x_column }} ↔ {{ analysis.config.primary_y_column }}</small>
+          </article>
+          {% endif %}
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Descriptive summaries</p>
+            <h2>Entire group and selected series</h2>
+          </div>
+        </div>
+
+        <div class="stats-grid compact">
+          <article class="stat-card">
+            <span>Overall mean</span>
+            <strong>{{ analysis.overall_summary.mean }}</strong>
+            <small>N = {{ analysis.overall_summary.count }}</small>
+          </article>
+          <article class="stat-card">
+            <span>Overall SD</span>
+            <strong>{{ analysis.overall_summary.sd }}</strong>
+            <small>Median = {{ analysis.overall_summary.median }}</small>
+          </article>
+          <article class="stat-card">
+            <span>Minimum</span>
+            <strong>{{ analysis.overall_summary.min }}</strong>
+            <small>Maximum = {{ analysis.overall_summary.max }}</small>
+          </article>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Series</th>
+                <th>N</th>
+                <th>Mean</th>
+                <th>SD</th>
+                <th>Median</th>
+                <th>Min</th>
+                <th>Max</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in analysis.column_summaries %}
+              <tr>
+                <td>{{ row.name }}</td>
+                <td>{{ row.count }}</td>
+                <td>{{ row.mean }}</td>
+                <td>{{ row.sd }}</td>
+                <td>{{ row.median }}</td>
+                <td>{{ row.min }}</td>
+                <td>{{ row.max }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Observation summaries</p>
+            <h2>Per-observation descriptive output</h2>
+          </div>
+          <p class="subtle">Showing the first {{ analysis.observation_summaries|length }} of {{ analysis.observation_total }} observations.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Observation</th>
+                <th>Mean</th>
+                <th>SD</th>
+                <th>Min</th>
+                <th>Max</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in analysis.observation_summaries %}
+              <tr>
+                <td>{{ row.observation }}</td>
+                <td>{{ row.mean }}</td>
+                <td>{{ row.sd }}</td>
+                <td>{{ row.min }}</td>
+                <td>{{ row.max }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Typical error</p>
+            <h2>Pairwise agreement metrics</h2>
+          </div>
+          <p class="subtle">{{ analysis.typical_error_formula }}</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Pair</th>
+                <th>Bias</th>
+                <th>Typical error</th>
+                <th>Lower LoA</th>
+                <th>Upper LoA</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in analysis.pair_metrics %}
+              <tr>
+                <td>{{ row.pair }}</td>
+                <td>{{ row.bias }}</td>
+                <td>{{ row.typical_error }}</td>
+                <td>{{ row.loa_lower }}</td>
+                <td>{{ row.loa_upper }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Figures</p>
+            <h2>{{ analysis.config.primary_x_column }} vs {{ analysis.config.primary_y_column }}</h2>
+          </div>
+          <p class="subtle">Default outputs are SVG and PDF.</p>
+        </div>
+
+        {% if analysis.config.figure_action in ['view', 'both'] %}
+        <div class="plot-grid">
+          <article class="plot-card">
+            <h3>Scatter plot</h3>
+            <object
+              data="{{ url_for('plot_file', analysis_id=analysis.id, plot_kind='scatter', file_format='svg') }}"
+              type="image/svg+xml"
+              class="plot-frame"
+            ></object>
+          </article>
+          <article class="plot-card">
+            <h3>Bland-Altman plot</h3>
+            <object
+              data="{{ url_for('plot_file', analysis_id=analysis.id, plot_kind='bland-altman', file_format='svg') }}"
+              type="image/svg+xml"
+              class="plot-frame"
+            ></object>
+          </article>
+        </div>
+        {% endif %}
+
+        {% if analysis.config.figure_action in ['save', 'both'] %}
+        <div class="download-grid">
+          <a class="download-link" href="{{ url_for('plot_file', analysis_id=analysis.id, plot_kind='scatter', file_format='svg', download=1) }}">Download scatter SVG</a>
+          <a class="download-link" href="{{ url_for('plot_file', analysis_id=analysis.id, plot_kind='scatter', file_format='pdf', download=1) }}">Download scatter PDF</a>
+          <a class="download-link" href="{{ url_for('plot_file', analysis_id=analysis.id, plot_kind='bland-altman', file_format='svg', download=1) }}">Download Bland-Altman SVG</a>
+          <a class="download-link" href="{{ url_for('plot_file', analysis_id=analysis.id, plot_kind='bland-altman', file_format='pdf', download=1) }}">Download Bland-Altman PDF</a>
+        </div>
+        {% endif %}
+      </section>
+      {% endif %}
+    </main>
+  </body>
+</html>
