@@ -18,6 +18,11 @@ import numpy as np
 import pandas as pd
 import pingouin as pg
 from flask import Flask, abort, redirect, render_template, request, send_file, url_for
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
@@ -463,43 +468,77 @@ def extract_ci_bounds(ci_value: object) -> tuple[float | None, float | None]:
     return None, None
 
 
-def analyse_wide_dataset(
-    upload_record: dict,
-    sheet_name: str,
-    subject_column: str | None,
+def slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
+    return slug or "pair"
+
+
+def manual_pair_key(x_column: str, y_column: str) -> str:
+    return f"manual-{slugify(x_column)}-vs-{slugify(y_column)}"
+
+
+def build_selected_pair_definitions(
+    sheet_meta: dict,
+    selected_pair_keys: list[str],
     measurement_columns: list[str],
     primary_x_column: str,
     primary_y_column: str,
-    selected_pair_key: str,
-    study_design: str,
-    agreement_definition: str,
-    measurement_unit: str,
-    figure_action: str,
+) -> list[dict]:
+    selected_pairs: list[dict] = []
+
+    for pair_key in selected_pair_keys:
+        pair = find_pair_by_key(sheet_meta, pair_key)
+        if pair is None:
+            continue
+        selected_pairs.append(
+            {
+                "pair_key": pair["key"],
+                "pair_label": pair["label"],
+                "measurement_columns": [pair["test_1"], pair["test_2"]],
+                "primary_x_column": pair["test_1"],
+                "primary_y_column": pair["test_2"],
+            }
+        )
+
+    if selected_pairs:
+        return selected_pairs
+
+    if primary_x_column and primary_y_column and primary_x_column != primary_y_column:
+        if primary_x_column not in measurement_columns or primary_y_column not in measurement_columns:
+            raise AnalysisError("Select manual plot columns from the chosen measurement columns.")
+
+        return [
+            {
+                "pair_key": manual_pair_key(primary_x_column, primary_y_column),
+                "pair_label": f"{primary_x_column} vs {primary_y_column}",
+                "measurement_columns": [primary_x_column, primary_y_column],
+                "primary_x_column": primary_x_column,
+                "primary_y_column": primary_y_column,
+            }
+        ]
+
+    raise AnalysisError("Select at least one detected pair or choose a valid manual X/Y column combination.")
+
+
+def analyse_pair_result(
+    dataframe: pd.DataFrame,
+    subject_column: str | None,
+    pair_definition: dict,
+    recommendation: dict,
 ) -> dict:
-    dataframe = read_dataset(get_upload_path(upload_record), upload_record["file_type"], sheet_name)
+    measurement_columns = pair_definition["measurement_columns"]
     prepared = prepare_analysis_frame(dataframe, subject_column, measurement_columns)
     wide_frame: pd.DataFrame = prepared["wide_frame"]
     subject_labels: list[str] = prepared["subject_labels"]
 
-    if primary_x_column not in measurement_columns or primary_y_column not in measurement_columns:
-        raise AnalysisError("Select plot columns from the chosen measurement columns.")
-
-    if primary_x_column == primary_y_column:
-        raise AnalysisError("Choose two different columns for the primary comparison plots.")
-
-    sheet_meta = get_sheet_meta(upload_record, sheet_name)
-    selected_pair = find_pair_by_key(sheet_meta, selected_pair_key)
-
     long_frame = wide_frame.copy()
     long_frame.insert(0, "subject", subject_labels)
     melted = long_frame.melt(id_vars="subject", var_name="rater", value_name="score")
-
-    recommendation = build_icc_recommendation(study_design, agreement_definition, measurement_unit)
     icc_table = pg.intraclass_corr(data=melted, targets="subject", raters="rater", ratings="score")
     icc_row = icc_table.loc[icc_table["Type"] == recommendation["icc_code"]]
 
     if icc_row.empty:
-        raise AnalysisError("The selected ICC model could not be calculated for this dataset.")
+        raise AnalysisError(f"The selected ICC model could not be calculated for {pair_definition['pair_label']}.")
 
     selected_row = icc_row.iloc[0]
     ci_lower, ci_upper = extract_ci_bounds(selected_row.get("CI95%"))
@@ -509,21 +548,11 @@ def analyse_wide_dataset(
     pair_metrics = build_typical_error_table(wide_frame)
 
     return {
-        "config": {
-            "upload_id": upload_record["id"],
-            "selected_sheet": sheet_name,
-            "subject_column": subject_column,
-            "measurement_columns": measurement_columns,
-            "primary_x_column": primary_x_column,
-            "primary_y_column": primary_y_column,
-            "selected_pair_key": selected_pair_key,
-            "selected_pair_label": selected_pair["label"] if selected_pair else None,
-            "study_design": study_design,
-            "agreement_definition": agreement_definition,
-            "measurement_unit": measurement_unit,
-            "figure_action": figure_action,
-        },
-        "recommendation": recommendation,
+        "pair_key": pair_definition["pair_key"],
+        "pair_label": pair_definition["pair_label"],
+        "measurement_columns": measurement_columns,
+        "primary_x_column": pair_definition["primary_x_column"],
+        "primary_y_column": pair_definition["primary_y_column"],
         "dataset_summary": {
             "observations": prepared["complete_row_count"],
             "raters": len(measurement_columns),
@@ -549,6 +578,59 @@ def analyse_wide_dataset(
     }
 
 
+def analyse_wide_dataset(
+    upload_record: dict,
+    sheet_name: str,
+    subject_column: str | None,
+    measurement_columns: list[str],
+    primary_x_column: str,
+    primary_y_column: str,
+    selected_pair_keys: list[str],
+    study_design: str,
+    agreement_definition: str,
+    measurement_unit: str,
+    figure_action: str,
+) -> dict:
+    dataframe = read_dataset(get_upload_path(upload_record), upload_record["file_type"], sheet_name)
+    sheet_meta = get_sheet_meta(upload_record, sheet_name)
+    recommendation = build_icc_recommendation(study_design, agreement_definition, measurement_unit)
+    pair_definitions = build_selected_pair_definitions(
+        sheet_meta,
+        selected_pair_keys,
+        measurement_columns,
+        primary_x_column,
+        primary_y_column,
+    )
+    pair_results = [
+        analyse_pair_result(dataframe, subject_column, pair_definition, recommendation)
+        for pair_definition in pair_definitions
+    ]
+
+    return {
+        "config": {
+            "upload_id": upload_record["id"],
+            "selected_sheet": sheet_name,
+            "subject_column": subject_column,
+            "measurement_columns": measurement_columns,
+            "primary_x_column": primary_x_column,
+            "primary_y_column": primary_y_column,
+            "selected_pair_keys": [pair_result["pair_key"] for pair_result in pair_results],
+            "selected_pair_labels": [pair_result["pair_label"] for pair_result in pair_results],
+            "study_design": study_design,
+            "agreement_definition": agreement_definition,
+            "measurement_unit": measurement_unit,
+            "figure_action": figure_action,
+        },
+        "recommendation": recommendation,
+        "dataset_summary": {
+            "pair_count": len(pair_results),
+            "source_rows": int(len(dataframe)),
+            "subject_label": subject_column or "Generated row labels",
+        },
+        "pair_results": pair_results,
+    }
+
+
 def save_analysis_record(analysis_result: dict) -> str:
     analysis_id = uuid4().hex
     payload = {"id": analysis_id, **analysis_result}
@@ -556,7 +638,7 @@ def save_analysis_record(analysis_result: dict) -> str:
     return analysis_id
 
 
-def build_source_data_frame(upload_record: dict, analysis_record: dict) -> pd.DataFrame:
+def build_source_data_frame(upload_record: dict, analysis_record: dict, pair_result: dict) -> pd.DataFrame:
     config = analysis_record["config"]
     dataframe = read_dataset(
         get_upload_path(upload_record),
@@ -566,7 +648,7 @@ def build_source_data_frame(upload_record: dict, analysis_record: dict) -> pd.Da
     prepared = prepare_analysis_frame(
         dataframe,
         config.get("subject_column"),
-        config["measurement_columns"],
+        pair_result["measurement_columns"],
     )
     wide_frame: pd.DataFrame = prepared["wide_frame"].copy()
     source_frame = wide_frame.copy()
@@ -580,6 +662,45 @@ def build_source_data_frame(upload_record: dict, analysis_record: dict) -> pd.Da
     return source_frame
 
 
+def build_source_data_export_frame(upload_record: dict, analysis_record: dict) -> pd.DataFrame:
+    export_frames: list[pd.DataFrame] = []
+
+    for pair_result in analysis_record["pair_results"]:
+        pair_frame = build_source_data_frame(upload_record, analysis_record, pair_result)
+        subject_name = pair_frame.columns[0]
+        export_frames.append(
+            pd.DataFrame(
+                {
+                    "pair_key": pair_result["pair_key"],
+                    "pair_label": pair_result["pair_label"],
+                    "observation_id": pair_frame[subject_name],
+                    "x_column": pair_result["primary_x_column"],
+                    "x_value": pair_frame[pair_result["primary_x_column"]],
+                    "y_column": pair_result["primary_y_column"],
+                    "y_value": pair_frame[pair_result["primary_y_column"]],
+                }
+            )
+        )
+
+    if not export_frames:
+        raise AnalysisError("No analysed pairs are available for export.")
+
+    return pd.concat(export_frames, ignore_index=True)
+
+
+def get_pair_result(analysis_record: dict, pair_key: str | None) -> dict:
+    pair_results = analysis_record.get("pair_results", [])
+    if not pair_results:
+        raise AnalysisError("No pair results were found for this analysis.")
+
+    if pair_key:
+        for pair_result in pair_results:
+            if pair_result["pair_key"] == pair_key:
+                return pair_result
+
+    return pair_results[0]
+
+
 def markdown_table(dataframe: pd.DataFrame) -> str:
     formatted = dataframe.copy().replace({np.nan: ""})
     numeric_columns = formatted.select_dtypes(include=[np.number]).columns
@@ -588,84 +709,354 @@ def markdown_table(dataframe: pd.DataFrame) -> str:
     return formatted.to_markdown(index=False)
 
 
-def build_markdown_report(analysis_record: dict) -> str:
+def load_package_versions() -> list[str]:
+    requirements_path = BASE_DIR / "requirements.txt"
+    if not requirements_path.exists():
+        return []
+
+    packages: list[str] = []
+    for line in requirements_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            packages.append(stripped)
+    return packages
+
+
+def dataframe_for_pdf(dataframe: pd.DataFrame, max_rows: int | None = None) -> list[list[str]]:
+    frame = dataframe.copy().replace({np.nan: ""})
+    if max_rows is not None:
+        frame = frame.head(max_rows)
+
+    table_rows: list[list[str]] = [list(frame.columns)]
+    for _, row in frame.iterrows():
+        formatted_row: list[str] = []
+        for value in row.tolist():
+            if isinstance(value, float):
+                formatted_row.append(f"{value:.4f}")
+            else:
+                formatted_row.append(str(value))
+        table_rows.append(formatted_row)
+    return table_rows
+
+
+def pdf_table(dataframe: pd.DataFrame, max_rows: int | None = None) -> Table:
+    table = Table(dataframe_for_pdf(dataframe, max_rows=max_rows), repeatRows=1)
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#dbeafe")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#94a3b8")),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("LEADING", (0, 0), (-1, -1), 10),
+            ]
+        )
+    )
+    return table
+
+
+def figure_to_pdf_image(figure: plt.Figure, width_inches: float) -> Image:
+    buffer = io.BytesIO()
+    figure.savefig(buffer, format="png", dpi=180, bbox_inches="tight")
+    plt.close(figure)
+    buffer.seek(0)
+    image = Image(buffer)
+    image.drawWidth = width_inches * inch
+    aspect_ratio = image.imageHeight / image.imageWidth if image.imageWidth else 1
+    image.drawHeight = image.drawWidth * aspect_ratio
+    return image
+
+
+def build_pdf_report(analysis_record: dict) -> bytes:
     config = analysis_record["config"]
     upload_record = load_upload(config["upload_id"])
     if upload_record is None:
         raise AnalysisError("The source upload for this analysis is no longer available.")
 
-    source_frame = build_source_data_frame(upload_record, analysis_record)
-    overall_summary_frame = pd.DataFrame([analysis_record["overall_summary"]])
-    column_summary_frame = pd.DataFrame(analysis_record["column_summaries"])
-    observation_summary_frame = pd.DataFrame(analysis_record["observation_summaries"])
-    pair_metrics_frame = pd.DataFrame(analysis_record["pair_metrics"])
+    styles = getSampleStyleSheet()
+    story: list = []
+    package_versions = load_package_versions()
+    source_frame = build_source_data_export_frame(upload_record, analysis_record)
+    selected_pairs = ", ".join(config.get("selected_pair_labels", [])) or "Manual column selection"
 
-    selected_pair = config.get("selected_pair_label") or "Manual column selection"
-    measurement_columns = ", ".join(config["measurement_columns"])
+    story.extend(
+        [
+            Paragraph("Reliability Analysis Report", styles["Title"]),
+            Spacer(1, 0.2 * inch),
+            Paragraph(f"Generated: {datetime.now().isoformat(timespec='seconds')}", styles["Normal"]),
+            Spacer(1, 0.2 * inch),
+            Paragraph("1. Analysed source data", styles["Heading1"]),
+            Paragraph(f"Source file: {upload_record['original_filename']}", styles["Normal"]),
+            Paragraph(f"Worksheet: {config['selected_sheet']}", styles["Normal"]),
+            Paragraph(f"Selected pairs: {selected_pairs}", styles["Normal"]),
+            Paragraph(f"Observation identifier: {config.get('subject_column') or 'Generated row labels'}", styles["Normal"]),
+            Spacer(1, 0.12 * inch),
+            pdf_table(source_frame),
+            Spacer(1, 0.24 * inch),
+            Paragraph("2. Analysis description", styles["Heading1"]),
+            Paragraph(f"Study design: {analysis_record['recommendation']['design_label']}", styles["Normal"]),
+            Paragraph(f"Agreement target: {analysis_record['recommendation']['agreement_label']}", styles["Normal"]),
+            Paragraph(f"Measurement unit: {analysis_record['recommendation']['measurement_label']}", styles["Normal"]),
+            Paragraph(f"Rationale: {analysis_record['recommendation']['rationale']}", styles["Normal"]),
+            Paragraph(f"Analysed pairs: {analysis_record['dataset_summary']['pair_count']}", styles["Normal"]),
+            Paragraph(f"Source rows: {analysis_record['dataset_summary']['source_rows']}", styles["Normal"]),
+            Spacer(1, 0.18 * inch),
+            Paragraph("Python packages used", styles["Heading2"]),
+        ]
+    )
+
+    for package in package_versions:
+        story.append(Paragraph(f"• {package}", styles["Normal"]))
+
+    story.extend(
+        [
+            Spacer(1, 0.16 * inch),
+            Paragraph("Commands and analysis steps used", styles["Heading2"]),
+            Paragraph("Run commands:", styles["Normal"]),
+            Paragraph("python app.py", styles["Code"]),
+            Paragraph("python run_web.py", styles["Code"]),
+            Spacer(1, 0.08 * inch),
+            Paragraph("Analysis workflow:", styles["Normal"]),
+            Paragraph("1. Load the worksheet and selected columns.", styles["Normal"]),
+            Paragraph("2. Drop rows with missing values for each selected pair.", styles["Normal"]),
+            Paragraph("3. Reshape the pair data and run pingouin.intraclass_corr(...).", styles["Normal"]),
+            Paragraph("4. Compute typical error as SD(y − x) / √2.", styles["Normal"]),
+            Paragraph("5. Compute bias and limits of agreement as bias ± 1.96 × SD(y − x).", styles["Normal"]),
+            Paragraph("6. Generate square scatter plots with a y = x line and Bland-Altman plots centered symmetrically around 0.", styles["Normal"]),
+        ]
+    )
+
+    for index, pair_result in enumerate(analysis_record["pair_results"], start=1):
+        pair_source_frame = build_source_data_frame(upload_record, analysis_record, pair_result)
+        overall_summary_frame = pd.DataFrame([pair_result["overall_summary"]])
+        column_summary_frame = pd.DataFrame(pair_result["column_summaries"])
+        observation_summary_frame = pd.DataFrame(pair_result["observation_summaries"])
+        pair_metrics_frame = pd.DataFrame(pair_result["pair_metrics"])
+
+        pair_frame = pair_source_frame[[pair_result["primary_x_column"], pair_result["primary_y_column"]]].copy()
+        scatter_image = figure_to_pdf_image(
+            build_scatter_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"]),
+            width_inches=5.8,
+        )
+        bland_image = figure_to_pdf_image(
+            build_bland_altman_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"]),
+            width_inches=5.8,
+        )
+
+        story.extend(
+            [
+                PageBreak() if index > 1 else Spacer(1, 0.2 * inch),
+                Paragraph(f"3.{index} Results for {pair_result['pair_label']}", styles["Heading1"]),
+                Paragraph(f"Columns: {pair_result['primary_x_column']} vs {pair_result['primary_y_column']}", styles["Normal"]),
+                Paragraph(f"ICC model: {pair_result['icc_result']['model']}", styles["Normal"]),
+                Paragraph(f"ICC estimate: {pair_result['icc_result']['estimate']}", styles["Normal"]),
+                Paragraph(f"95% CI: {pair_result['icc_result']['ci_lower']} to {pair_result['icc_result']['ci_upper']}", styles["Normal"]),
+                Paragraph(f"F value: {pair_result['icc_result']['f_value']}", styles["Normal"]),
+                Paragraph(f"P value: {pair_result['icc_result']['p_value']}", styles["Normal"]),
+                Paragraph(f"Description: {pair_result['icc_result']['description']}", styles["Normal"]),
+                Paragraph(f"Complete observations analysed: {pair_result['dataset_summary']['observations']}", styles["Normal"]),
+                Paragraph(f"Dropped rows due to missing values: {pair_result['dataset_summary']['dropped_rows']}", styles["Normal"]),
+                Paragraph(f"Typical error formula: {pair_result['typical_error_formula']}", styles["Normal"]),
+                Spacer(1, 0.12 * inch),
+                Paragraph("Overall descriptive summary", styles["Heading2"]),
+                pdf_table(overall_summary_frame),
+                Spacer(1, 0.12 * inch),
+                Paragraph("Series summaries", styles["Heading2"]),
+                pdf_table(column_summary_frame),
+                Spacer(1, 0.12 * inch),
+                Paragraph("Observation summaries", styles["Heading2"]),
+                pdf_table(observation_summary_frame),
+                Spacer(1, 0.12 * inch),
+                Paragraph("Typical error and limits of agreement", styles["Heading2"]),
+                pdf_table(pair_metrics_frame),
+                Spacer(1, 0.12 * inch),
+                Paragraph("Source data used for this pair", styles["Heading2"]),
+                pdf_table(pair_source_frame),
+                Spacer(1, 0.14 * inch),
+                Paragraph("Figures", styles["Heading2"]),
+                scatter_image,
+                Spacer(1, 0.12 * inch),
+                bland_image,
+            ]
+        )
+
+    buffer = io.BytesIO()
+    document = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=30, rightMargin=30, topMargin=30, bottomMargin=30)
+    document.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def build_markdown_report(analysis_record: dict, base_url: str | None = None) -> str:
+    config = analysis_record["config"]
+    upload_record = load_upload(config["upload_id"])
+    if upload_record is None:
+        raise AnalysisError("The source upload for this analysis is no longer available.")
+
+    source_frame = build_source_data_export_frame(upload_record, analysis_record)
+    selected_pairs = ", ".join(config.get("selected_pair_labels", [])) or "Manual column selection"
+    base_url = (base_url or "").rstrip("/")
+    package_versions = load_package_versions()
 
     lines = [
         "# Reliability Analysis Report",
         "",
         f"Generated: {datetime.now().isoformat(timespec='seconds')}",
         "",
-        "## Source",
+        "## Analysed source data",
         "",
-        f"- File: {upload_record['original_filename']}",
+        f"Source file: {upload_record['original_filename']}",
+        "",
+        markdown_table(source_frame),
+        "",
+        "## Analysis description",
+        "",
         f"- Worksheet: {config['selected_sheet']}",
-        f"- Selected pair: {selected_pair}",
-        f"- Measurement columns: {measurement_columns}",
+        f"- Selected pairs: {selected_pairs}",
         f"- Observation identifier: {config.get('subject_column') or 'Generated row labels'}",
-        "",
-        "## Analysis settings",
-        "",
-        f"- ICC model: {analysis_record['icc_result']['model']}",
         f"- Study design: {analysis_record['recommendation']['design_label']}",
         f"- Agreement target: {analysis_record['recommendation']['agreement_label']}",
         f"- Measurement unit: {analysis_record['recommendation']['measurement_label']}",
         f"- Rationale: {analysis_record['recommendation']['rationale']}",
-        f"- Typical error formula: {analysis_record['typical_error_formula']}",
-        "",
-        "## Reliability result",
-        "",
-        f"- ICC estimate: {analysis_record['icc_result']['estimate']}",
-        f"- 95% CI: {analysis_record['icc_result']['ci_lower']} to {analysis_record['icc_result']['ci_upper']}",
-        f"- F value: {analysis_record['icc_result']['f_value']}",
-        f"- P value: {analysis_record['icc_result']['p_value']}",
-        f"- Description: {analysis_record['icc_result']['description']}",
-        "",
-        "## Dataset summary",
-        "",
-        f"- Complete observations analysed: {analysis_record['dataset_summary']['observations']}",
-        f"- Raters / series: {analysis_record['dataset_summary']['raters']}",
+        f"- Analysed pairs: {analysis_record['dataset_summary']['pair_count']}",
         f"- Source rows: {analysis_record['dataset_summary']['source_rows']}",
-        f"- Dropped rows due to missing values: {analysis_record['dataset_summary']['dropped_rows']}",
+        f"- Subject identifier: {analysis_record['dataset_summary']['subject_label']}",
         "",
-        "## Overall descriptive summary",
+        "### Python packages used",
         "",
-        markdown_table(overall_summary_frame),
-        "",
-        "## Series summaries",
-        "",
-        markdown_table(column_summary_frame),
-        "",
-        "## Observation summaries",
-        "",
-        markdown_table(observation_summary_frame),
-        "",
-        "## Typical error and limits of agreement",
-        "",
-        markdown_table(pair_metrics_frame),
-        "",
-        "## Source data used in the analysis",
-        "",
-        markdown_table(source_frame),
-        "",
-        "## Notes",
-        "",
-        "- This report includes the analysed source rows after missing-value filtering.",
-        "- Figures are available separately in SVG and PDF from the web app.",
-        "- Full implementation code is intentionally not embedded in the report by default.",
     ]
+
+    lines.extend([f"- {package}" for package in package_versions])
+    lines.extend(
+        [
+            "",
+            "### Commands and analysis steps used",
+            "",
+            "The web app was run with one of the following commands:",
+            "",
+            "```powershell",
+            "python app.py",
+            "# or",
+            "python run_web.py",
+            "```",
+            "",
+            "For each selected pair, the app executed the following analysis workflow:",
+            "",
+            "```python",
+            "dataframe = read_dataset(upload_path, file_type, selected_sheet)",
+            "pair_frame = dataframe[[subject_column, x_column, y_column]].copy()",
+            "pair_frame = pair_frame.dropna(subset=[x_column, y_column])",
+            "melted = pair_frame.melt(id_vars='subject', var_name='rater', value_name='score')",
+            "icc_table = pingouin.intraclass_corr(data=melted, targets='subject', raters='rater', ratings='score')",
+            "typical_error = SD(y - x) / sqrt(2)",
+            "bias = mean(y - x)",
+            "limits_of_agreement = bias ± 1.96 * SD(y - x)",
+            "scatter_plot = square plot with y = x reference line",
+            "bland_altman_plot = mean(x, y) vs (y - x), centred symmetrically around 0",
+            "```",
+            "",
+            "### Notes on figures",
+            "",
+            "- The Markdown report is a single text file.",
+            "- Figures are included below as links and Markdown image references to the live web app routes.",
+            "- If the app is no longer running when the Markdown file is opened, the figure links may not render.",
+        ]
+    )
+
+    for pair_result in analysis_record["pair_results"]:
+        overall_summary_frame = pd.DataFrame([pair_result["overall_summary"]])
+        column_summary_frame = pd.DataFrame(pair_result["column_summaries"])
+        observation_summary_frame = pd.DataFrame(pair_result["observation_summaries"])
+        pair_metrics_frame = pd.DataFrame(pair_result["pair_metrics"])
+        pair_source_frame = build_source_data_frame(upload_record, analysis_record, pair_result)
+        scatter_svg = (
+            f"{base_url}/plots/{analysis_record['id']}/{pair_result['pair_key']}/scatter.svg"
+            if base_url
+            else None
+        )
+        scatter_pdf = (
+            f"{base_url}/plots/{analysis_record['id']}/{pair_result['pair_key']}/scatter.pdf?download=1"
+            if base_url
+            else None
+        )
+        bland_svg = (
+            f"{base_url}/plots/{analysis_record['id']}/{pair_result['pair_key']}/bland-altman.svg"
+            if base_url
+            else None
+        )
+        bland_pdf = (
+            f"{base_url}/plots/{analysis_record['id']}/{pair_result['pair_key']}/bland-altman.pdf?download=1"
+            if base_url
+            else None
+        )
+
+        lines.extend(
+            [
+                "",
+                f"## Results for pair: {pair_result['pair_label']}",
+                "",
+                f"- Columns: {pair_result['primary_x_column']} vs {pair_result['primary_y_column']}",
+                f"- ICC model: {pair_result['icc_result']['model']}",
+                f"- ICC estimate: {pair_result['icc_result']['estimate']}",
+                f"- 95% CI: {pair_result['icc_result']['ci_lower']} to {pair_result['icc_result']['ci_upper']}",
+                f"- F value: {pair_result['icc_result']['f_value']}",
+                f"- P value: {pair_result['icc_result']['p_value']}",
+                f"- Description: {pair_result['icc_result']['description']}",
+                f"- Complete observations analysed: {pair_result['dataset_summary']['observations']}",
+                f"- Dropped rows due to missing values: {pair_result['dataset_summary']['dropped_rows']}",
+                f"- Typical error formula: {pair_result['typical_error_formula']}",
+                "",
+                "### Overall descriptive summary",
+                "",
+                markdown_table(overall_summary_frame),
+                "",
+                "### Series summaries",
+                "",
+                markdown_table(column_summary_frame),
+                "",
+                "### Observation summaries",
+                "",
+                markdown_table(observation_summary_frame),
+                "",
+                "### Typical error and limits of agreement",
+                "",
+                markdown_table(pair_metrics_frame),
+                "",
+                "### Source data used for this pair",
+                "",
+                markdown_table(pair_source_frame),
+            ]
+        )
+
+        if scatter_svg and bland_svg:
+            lines.extend(
+                [
+                    "",
+                    "### Figures",
+                    "",
+                    f"- [Scatter SVG]({scatter_svg})",
+                    f"- [Scatter PDF]({scatter_pdf})",
+                    f"- [Bland-Altman SVG]({bland_svg})",
+                    f"- [Bland-Altman PDF]({bland_pdf})",
+                    "",
+                    f"![Scatter plot for {pair_result['pair_label']}]({scatter_svg})",
+                    "",
+                    f"![Bland-Altman plot for {pair_result['pair_label']}]({bland_svg})",
+                ]
+            )
+
+    lines.extend(
+        [
+            "## Notes",
+            "",
+            "- This report includes the analysed source rows after pair-specific missing-value filtering.",
+            "- This Markdown file combines the analysed data, analysis description, results, and figure links in one report.",
+            "- Full implementation source code is not embedded, but the commands and package set used by the app are listed above.",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -720,7 +1111,7 @@ def build_bland_altman_plot(dataframe: pd.DataFrame, x_column: str, y_column: st
     return figure
 
 
-def build_plot_response(analysis_record: dict, plot_kind: str, file_format: str, download: bool):
+def build_plot_response(analysis_record: dict, pair_key: str, plot_kind: str, file_format: str, download: bool):
     if file_format not in {"svg", "pdf"}:
         abort(404)
 
@@ -728,20 +1119,15 @@ def build_plot_response(analysis_record: dict, plot_kind: str, file_format: str,
     upload_record = load_upload(config["upload_id"])
     if upload_record is None:
         abort(404)
+    try:
+        pair_result = get_pair_result(analysis_record, pair_key)
+    except AnalysisError:
+        abort(404)
 
-    dataframe = read_dataset(
-        get_upload_path(upload_record),
-        upload_record["file_type"],
-        config["selected_sheet"],
-    )
-    prepared = prepare_analysis_frame(
-        dataframe,
-        config.get("subject_column"),
-        config["measurement_columns"],
-    )
-    wide_frame: pd.DataFrame = prepared["wide_frame"]
-    x_column = config["primary_x_column"]
-    y_column = config["primary_y_column"]
+    pair_frame = build_source_data_frame(upload_record, analysis_record, pair_result)
+    x_column = pair_result["primary_x_column"]
+    y_column = pair_result["primary_y_column"]
+    wide_frame = pair_frame[[x_column, y_column]].copy()
 
     if plot_kind == "scatter":
         figure = build_scatter_plot(wide_frame, x_column, y_column)
@@ -755,7 +1141,7 @@ def build_plot_response(analysis_record: dict, plot_kind: str, file_format: str,
     plt.close(figure)
     buffer.seek(0)
 
-    download_name = f"{plot_kind}-{x_column}-vs-{y_column}.{file_format}".replace(" ", "-")
+    download_name = f"{plot_kind}-{pair_result['pair_key']}.{file_format}".replace(" ", "-")
     mimetype = "image/svg+xml" if file_format == "svg" else "application/pdf"
     return send_file(buffer, mimetype=mimetype, as_attachment=download, download_name=download_name)
 
@@ -776,7 +1162,7 @@ def default_form_state(sheet_meta: dict | None, analysis_record: dict | None = N
         "measurement_columns": default_measurements,
         "primary_x_column": default_measurements[0] if len(default_measurements) >= 1 else "",
         "primary_y_column": default_measurements[1] if len(default_measurements) >= 2 else "",
-        "selected_pair_key": default_pair["key"] if default_pair else "",
+        "selected_pair_keys": [default_pair["key"]] if default_pair else [],
         "study_design": "two_way_random",
         "agreement_definition": "absolute",
         "measurement_unit": "single",
@@ -795,7 +1181,7 @@ def default_form_state(sheet_meta: dict | None, analysis_record: dict | None = N
                 "measurement_columns": config.get("measurement_columns", default_measurements),
                 "primary_x_column": config.get("primary_x_column", ""),
                 "primary_y_column": config.get("primary_y_column", ""),
-                "selected_pair_key": config.get("selected_pair_key", form_state["selected_pair_key"]),
+                "selected_pair_keys": config.get("selected_pair_keys", form_state["selected_pair_keys"]),
                 "study_design": config.get("study_design", "two_way_random"),
                 "agreement_definition": config.get("agreement_definition", "absolute"),
                 "measurement_unit": config.get("measurement_unit", "single"),
@@ -808,14 +1194,20 @@ def default_form_state(sheet_meta: dict | None, analysis_record: dict | None = N
 
 
 def form_state_from_request(sheet_meta: dict) -> dict:
-    selected_pair_key = request.form.get("selected_pair_key", "")
+    selected_pair_keys = request.form.getlist("selected_pair_keys")
     measurement_columns = request.form.getlist("measurement_columns")
-    selected_pair = find_pair_by_key(sheet_meta, selected_pair_key)
+    selected_pairs = [pair for pair_key in selected_pair_keys if (pair := find_pair_by_key(sheet_meta, pair_key)) is not None]
 
-    if selected_pair is not None:
-        measurement_columns = [selected_pair["test_1"], selected_pair["test_2"]]
-        primary_x_column = selected_pair["test_1"]
-        primary_y_column = selected_pair["test_2"]
+    if selected_pairs:
+        measurement_columns = list(
+            dict.fromkeys(
+                column
+                for pair in selected_pairs
+                for column in (pair["test_1"], pair["test_2"])
+            )
+        )
+        primary_x_column = selected_pairs[0]["test_1"]
+        primary_y_column = selected_pairs[0]["test_2"]
     else:
         primary_x_column = request.form.get("primary_x_column", "")
         primary_y_column = request.form.get("primary_y_column", "")
@@ -825,7 +1217,7 @@ def form_state_from_request(sheet_meta: dict) -> dict:
         "measurement_columns": measurement_columns,
         "primary_x_column": primary_x_column,
         "primary_y_column": primary_y_column,
-        "selected_pair_key": selected_pair_key,
+        "selected_pair_keys": selected_pair_keys,
         "study_design": request.form.get("study_design", "two_way_random"),
         "agreement_definition": request.form.get("agreement_definition", "absolute"),
         "measurement_unit": request.form.get("measurement_unit", "single"),
@@ -876,7 +1268,7 @@ def index() -> str:
                         measurement_columns=form_state["measurement_columns"],
                         primary_x_column=form_state["primary_x_column"],
                         primary_y_column=form_state["primary_y_column"],
-                        selected_pair_key=form_state["selected_pair_key"],
+                        selected_pair_keys=form_state["selected_pair_keys"],
                         study_design=form_state["study_design"],
                         agreement_definition=form_state["agreement_definition"],
                         measurement_unit=form_state["measurement_unit"],
@@ -889,6 +1281,7 @@ def index() -> str:
                             upload_id=upload_id,
                             sheet=active_sheet,
                             analysis_id=analysis_id,
+                            prompt="1",
                         )
                     )
                 except AnalysisError as exc:
@@ -909,6 +1302,7 @@ def index() -> str:
     upload_id = request.args.get("upload_id")
     analysis_id = request.args.get("analysis_id")
     analysis_record = load_analysis(analysis_id)
+    show_export_prompt = request.args.get("prompt") == "1"
 
     if analysis_record and not upload_id:
         upload_id = analysis_record["config"]["upload_id"]
@@ -940,17 +1334,18 @@ def index() -> str:
         preview_rows=preview_rows,
         form_state=form_state,
         analysis=analysis_record,
+        show_export_prompt=show_export_prompt,
     )
 
 
-@app.get("/plots/<analysis_id>/<plot_kind>.<file_format>")
-def plot_file(analysis_id: str, plot_kind: str, file_format: str):
+@app.get("/plots/<analysis_id>/<pair_key>/<plot_kind>.<file_format>")
+def plot_file(analysis_id: str, pair_key: str, plot_kind: str, file_format: str):
     ensure_storage()
     analysis_record = load_analysis(analysis_id)
     if analysis_record is None:
         abort(404)
     download = request.args.get("download") == "1"
-    return build_plot_response(analysis_record, plot_kind, file_format, download)
+    return build_plot_response(analysis_record, pair_key, plot_kind, file_format, download)
 
 
 @app.get("/reports/<analysis_id>.md")
@@ -961,7 +1356,7 @@ def markdown_report(analysis_id: str):
         abort(404)
 
     try:
-        report = build_markdown_report(analysis_record)
+        report = build_markdown_report(analysis_record, request.url_root)
     except AnalysisError:
         abort(404)
 
@@ -970,6 +1365,28 @@ def markdown_report(analysis_id: str):
     return send_file(
         buffer,
         mimetype="text/markdown; charset=utf-8",
+        as_attachment=True,
+        download_name=download_name,
+    )
+
+
+@app.get("/reports/<analysis_id>.pdf")
+def pdf_report(analysis_id: str):
+    ensure_storage()
+    analysis_record = load_analysis(analysis_id)
+    if analysis_record is None:
+        abort(404)
+
+    try:
+        pdf_bytes = build_pdf_report(analysis_record)
+    except AnalysisError:
+        abort(404)
+
+    buffer = io.BytesIO(pdf_bytes)
+    download_name = f"reliability-results-{analysis_id}.pdf"
+    return send_file(
+        buffer,
+        mimetype="application/pdf",
         as_attachment=True,
         download_name=download_name,
     )
@@ -987,7 +1404,7 @@ def source_data_csv(analysis_id: str):
         abort(404)
 
     try:
-        source_frame = build_source_data_frame(upload_record, analysis_record)
+        source_frame = build_source_data_export_frame(upload_record, analysis_record)
     except AnalysisError:
         abort(404)
 
@@ -1003,4 +1420,8 @@ def source_data_csv(analysis_id: str):
 
 if __name__ == "__main__":
     ensure_storage()
-    app.run(debug=True)
+    app.run(
+        host=os.environ.get("HOST", "127.0.0.1"),
+        port=int(os.environ.get("PORT", "5000")),
+        debug=os.environ.get("FLASK_DEBUG", "1") == "1",
+    )

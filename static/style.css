@@ -39,6 +39,53 @@ body {
   align-items: center;
 }
 
+.guide-card {
+  padding-top: 1rem;
+}
+
+.guide-details summary {
+  display: grid;
+  gap: 0.25rem;
+  cursor: pointer;
+  list-style: none;
+  color: #f8fafc;
+  font-weight: 700;
+}
+
+.guide-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.guide-details summary small {
+  font-weight: 400;
+  color: #94a3b8;
+}
+
+.guide-grid {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.guide-grid article {
+  padding: 1rem;
+  border-radius: 18px;
+  background: rgba(30, 41, 59, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.guide-grid ul,
+.guide-grid ol {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: #cbd5e1;
+}
+
+.guide-grid li + li {
+  margin-top: 0.45rem;
+}
+
 .eyebrow {
   margin: 0 0 0.35rem;
   text-transform: uppercase;
@@ -212,6 +259,22 @@ button,
   gap: 0.5rem;
 }
 
+.pair-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.nav-pill,
+.table-link {
+  text-decoration: none;
+}
+
+.results-overview {
+  display: grid;
+  gap: 0.75rem;
+}
+
 .muted {
   opacity: 0.8;
 }
@@ -332,9 +395,22 @@ td {
   color: #e2e8f0;
 }
 
+.table-link {
+  color: #93c5fd;
+  font-weight: 700;
+}
+
 .plot-grid {
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   margin-bottom: 1rem;
+}
+
+.pair-result-card {
+  border-color: rgba(96, 165, 250, 0.2);
+}
+
+.top-gap {
+  margin-top: 1rem;
 }
 
 .plot-frame {
