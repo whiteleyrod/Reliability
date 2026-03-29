@@ -1,13 +1,59 @@
 # Project Plan: Web-Based Inter-Rater Reliability Tool
 
+## Implementation Status Snapshot
+
+This plan now also serves as an implementation record.
+
+### Implemented in the current build
+
+- Flask web application scaffolded and running locally
+- Virtual environment and Python dependency management established
+- CSV and XLSX upload support
+- Worksheet scanning for Excel workbooks
+- Uploaded data preview in the browser
+- Automatic detection of likely `Test 1` / `Test 2` reliability pairs
+- Clean pair-selection interface with support for multiple selected pairs in one run
+- Manual X/Y fallback when no detected pair is selected
+- Observation identifier selection
+- ICC design, agreement, and measurement-unit selection
+- ICC recommendation rationale shown in plain language
+- Tooltip guidance for study design, agreement target, and measurement unit choices
+- ICC calculation using `pingouin`
+- 95% confidence intervals displayed correctly
+- Descriptive summaries for the analysed sample
+- Descriptive summaries for each selected series
+- Observation-level descriptive summaries
+- Median and IQR included in descriptive outputs
+- Residual mean square error included at the analysis-level descriptive summary
+- Typical error, bias, and limits of agreement calculations
+- Square scatter plots with `y = x`
+- Bland-Altman plots centred symmetrically around `0`
+- SVG preview and SVG/PDF figure download routes
+- PDF report export including data, methods, results, and figures
+- DOCX report export including embedded SVG figure parts with PNG fallbacks for Word compatibility
+- CSV export of analysed source data
+- Post-analysis export chooser in the UI
+- Optional landing-page user guide
+- Deployment support via `waitress`, `wsgi.py`, `run_web.py`, `Dockerfile`, `compose.yaml`, and `Procfile`
+- GitHub repository setup and pushed updates
+
+### Partially implemented or still open
+
+- Long-format data mapping is not yet implemented as a full workflow
+- Missing-data handling is currently drop-complete-cases per selected pair, with reporting but limited user options
+- Automated test coverage is still limited and mostly based on targeted validation scripts
+- Interpretation guidance is present in a limited form and could be expanded
+
 ## 1. Goal
 
 Build a web-based application that allows users to upload `.xlsx` or `.csv` files, select the relevant columns for analysis, confirm the structure of raters and observations, receive guidance on the appropriate intraclass correlation coefficient (ICC) approach, and generate reliability outputs including:
 
 - ICC estimate
 - 95% confidence intervals
+- descriptive summaries including mean, SD, median, IQR, and residual mean square error
 - Scatter plots
 - Bland-Altman plots
+- PDF and DOCX report exports
 
 ## 2. Core User Workflow
 
@@ -28,13 +74,15 @@ Build a web-based application that allows users to upload `.xlsx` or `.csv` file
    - ICC value
    - 95% confidence interval
   - descriptive summaries for the entire group
+  - descriptive summaries for each selected series
   - descriptive summaries for each set of observations
+  - residual mean square error for the overall selected analysis
   - typical error metrics
    - summary statistics
 10. Application generates visual outputs:
    - scatter plots between raters
    - Bland-Altman plots
-11. User downloads or saves results.
+11. User downloads or saves results as CSV, PDF, or DOCX.
 
 ## 3. Functional Requirements
 
@@ -46,12 +94,13 @@ Build a web-based application that allows users to upload `.xlsx` or `.csv` file
 - Present worksheet names clearly before data mapping begins
 - Detect parsing errors and show user-friendly messages
 - Preview uploaded data in a table
-- Handle missing values with clear user options or warnings
+- Handle missing values with current pairwise complete-case filtering and clear reporting of dropped rows
 
 ### 3.2 Data Selection and Mapping
 
 - Let user choose relevant columns for analysis
 - Provide a clean interface for selecting reliability pairs of data
+- Allow the user to select multiple detected pairs in one run
 - Allow the user to select from detected worksheets and scanned column headings
 - Support both common layouts:
   - wide format: one column per rater
@@ -62,6 +111,12 @@ Build a web-based application that allows users to upload `.xlsx` or `.csv` file
   - score/value field
 - Support explicit pairing of measurement columns when pairwise reliability analysis is required
 - Validate that the chosen structure is compatible with ICC calculation
+
+Implementation status:
+- Wide-format workflow: implemented
+- Auto-detected `Test 1` / `Test 2` pair workflow: implemented
+- Multiple-pair workflow: implemented
+- Long-format workflow: planned, not yet implemented
 
 ### 3.3 ICC Recommendation Engine
 
@@ -77,6 +132,7 @@ Build a web-based application that allows users to upload `.xlsx` or `.csv` file
   - single measurement
   - average measurement
 - Present the suggested ICC in plain language and technical notation
+- Provide hover help describing when each choice is appropriate
 
 ### 3.4 Reliability Analysis
 
@@ -84,6 +140,8 @@ Build a web-based application that allows users to upload `.xlsx` or `.csv` file
 - Compute 95% confidence interval
 - Compute descriptive statistics for the full analysed sample
 - Compute descriptive statistics for each observation set or selected rating series
+- Include median and IQR in descriptive summaries
+- Include residual mean square error in the overall descriptive summary for the selected analysis
 - Compute typical error metrics and define clearly how they are calculated
 - Report sample size, number of raters, and missing-data handling
 - Display assumptions and caveats
@@ -101,6 +159,7 @@ Build a web-based application that allows users to upload `.xlsx` or `.csv` file
 - Clear labels, legends, and axis titles
 - By default, figure outputs should be generated as SVG and PDF
 - User should be able to choose to view figures, save figures, or do both
+- Figures should also be embedded in exported reports
 
 ### 3.6 Reporting
 
@@ -111,10 +170,14 @@ Build a web-based application that allows users to upload `.xlsx` or `.csv` file
   - 95% confidence interval
   - descriptive statistics for the full group
   - descriptive statistics for each selected observation set
+  - median and IQR
+  - residual mean square error in the analysis-level summary
   - typical error metrics
   - interpretation guidance
 - Provide figure output actions for view, save, or both
-- Optional export of summary results to CSV or PDF in a later phase
+- Export analysed source data to CSV
+- Export report to PDF
+- Export report to DOCX
 
 ## 4. Non-Functional Requirements
 
@@ -124,6 +187,7 @@ Build a web-based application that allows users to upload `.xlsx` or `.csv` file
 - Good error handling for malformed files and invalid selections
 - Reproducible analysis logic
 - Maintainable project structure for future expansion
+- Deployable on a personal server or container host
 
 ## 5. Proposed Technical Stack
 
@@ -135,6 +199,9 @@ Given the current project setup, the initial implementation can use:
 - Statistics: pingouin and/or statsmodels
 - Plotting: matplotlib and seaborn
 - Frontend: Jinja templates, HTML, CSS, light JavaScript as needed
+- Reporting: ReportLab and python-docx
+- Serving: waitress
+- Deployment: Docker / Compose / Procfile / WSGI
 
 ## 6. Proposed Application Modules
 
@@ -148,6 +215,8 @@ Responsibilities:
 - parse into a DataFrame
 - store temporary analysis session data
 
+Status: implemented
+
 ### 6.2 Data Mapping Module
 
 Responsibilities:
@@ -158,6 +227,12 @@ Responsibilities:
 - reshape data when needed
 - validate completeness
 
+Status:
+- worksheet preview and pair selection: implemented
+- subject-column selection: implemented
+- multi-pair selection: implemented
+- full long-format mapping: not yet implemented
+
 ### 6.3 ICC Decision Module
 
 Responsibilities:
@@ -165,6 +240,8 @@ Responsibilities:
 - infer appropriate ICC type
 - explain rationale
 - request final user confirmation
+
+Status: implemented, including hover guidance text for user choices
 
 ### 6.4 Analysis Module
 
@@ -176,6 +253,8 @@ Responsibilities:
 - compute per-observation-set descriptive statistics
 - compute typical error metrics
 - summarise key metadata
+
+Status: implemented
 
 ### 6.5 Visualisation Module
 
@@ -189,12 +268,16 @@ Responsibilities:
 - support user choice to view, save, or both
 - return rendered images or embeddable outputs
 
+Status: implemented
+
 ### 6.6 Results Module
 
 Responsibilities:
 - display numeric outputs
 - present plot outputs
 - provide export options later
+
+Status: implemented with CSV, PDF, and DOCX export options
 
 ## 7. Data and Statistical Considerations
 
@@ -212,6 +295,11 @@ Responsibilities:
   - ICC(3,k)
 - Provide interpretation guidance carefully and avoid oversimplifying clinical or research conclusions
 
+Current implementation notes:
+- Missing values are handled by dropping incomplete rows for each selected pair
+- ICC notation is aligned to the labels returned by `pingouin`, for example `ICC(1,1)`, `ICC(A,1)`, and `ICC(C,1)`
+- Descriptives currently include mean, SD, median, IQR, min, max, and residual mean square error at the analysis level
+
 ## 8. Development Phases
 
 ### Phase 1: Foundation
@@ -223,6 +311,8 @@ Responsibilities:
 - Scan worksheet names and column headings
 - Display data preview
 
+Status: completed
+
 ### Phase 2: Data Mapping UI
 
 - Build column selection workflow
@@ -231,11 +321,17 @@ Responsibilities:
 - Add validation messages
 - Confirm observations and raters
 
+Status: partially completed
+- wide-format and pair-selection workflows completed
+- long-format workflow still open
+
 ### Phase 3: ICC Recommendation Logic
 
 - Implement questionnaire for study design
 - Map responses to ICC type suggestion
 - Add explanatory help text
+
+Status: completed
 
 ### Phase 4: Statistical Analysis
 
@@ -245,6 +341,8 @@ Responsibilities:
 - Validate against known examples
 - Add summary output tables
 
+Status: completed for the current wide-format pairwise workflow
+
 ### Phase 5: Visualisation
 
 - Add scatter plot generation
@@ -253,12 +351,20 @@ Responsibilities:
 - Add SVG and PDF figure export flow
 - Add user controls for view, save, or both
 
+Status: completed
+
 ### Phase 6: Refinement
 
 - Improve UX and error handling
 - Add exports
 - Add test coverage
 - Prepare deployment configuration
+
+Status: mostly completed
+- UX improved with guide, chooser, navigator, and tooltips
+- exports added for CSV, PDF, and DOCX
+- deployment configuration added
+- broader automated test coverage remains open
 
 ## 9. Key Risks and Open Questions
 
@@ -268,20 +374,16 @@ Responsibilities:
 - Determining how much automation should be used before requiring explicit user confirmation
 - Deciding whether Bland-Altman plots should be limited to two raters or extended pairwise for multiple raters
 - Ensuring SVG preview and PDF export both work reliably in the browser workflow
+- Ensuring DOCX SVG rendering behaves consistently across Word versions and viewers
 
 ## 10. Recommended Immediate Next Steps
 
-1. Add core analysis dependencies:
-   - `pandas`
-   - `openpyxl`
-   - `pingouin`
-   - `matplotlib`
-   - `seaborn`
-2. Create upload, worksheet scan, and dataset preview flow in the Flask app.
-3. Define the internal canonical data structure for subject, rater, score, and paired comparison data.
-4. Design the UI for worksheet, column, and reliability-pair selection.
-5. Implement the ICC decision questionnaire.
-6. Validate ICC and typical error outputs against reference examples before exposing final results.
+1. Add full long-format data mapping workflow.
+2. Expand automated test coverage for upload, analysis, plotting, PDF export, and DOCX export.
+3. Improve interpretation guidance and reporting notes.
+4. Add stronger missing-data options if users need alternatives to complete-case filtering.
+5. Verify DOCX SVG behavior in Microsoft Word across target environments.
+6. Prepare production deployment target and live hosting workflow.
 
 ## 11. Definition of Done for Initial Release
 
@@ -295,9 +397,12 @@ The first usable release should allow a user to:
 - receive an ICC recommendation
 - calculate ICC with 95% confidence intervals
 - view descriptive summaries for the full group and each observation set
+- view median, IQR, and residual mean square error in the descriptive outputs
 - view typical error metrics
 - view square scatter plots with a `y = x` reference line
 - view Bland-Altman plots centered symmetrically around 0 and showing bias and limits of agreement
 - receive figure outputs in SVG and PDF by default
 - choose whether to view figures, save figures, or both
 - understand what model was used and why
+
+Current release status: this definition is met for the implemented wide-format, pair-based workflow, with additional CSV, PDF, and DOCX export support.
