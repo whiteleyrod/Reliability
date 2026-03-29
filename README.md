@@ -22,6 +22,7 @@ Current build includes:
 - CSV export of the analysed source data used in each reliability analysis
 - health endpoint for container and platform checks at `/healthz`
 - basic automated CI coverage for plotting and core helper functions
+- reverse-proxy-safe configuration for subdomain deployment
 - deployment-ready WSGI runner with `waitress`
 - Docker, Compose, and Procfile deployment support
 
@@ -101,6 +102,11 @@ python -m unittest discover -s tests -p "test_*.py"
 
 This remains a Flask web app and now includes [wsgi.py](wsgi.py), [run_web.py](run_web.py), [Dockerfile](Dockerfile), [compose.yaml](compose.yaml), and [Procfile](Procfile) for deployment.
 
+For a production subdomain deployment, the repo also includes:
+
+- [deploy/compose.production.yaml](deploy/compose.production.yaml)
+- [deploy/Caddyfile.example](deploy/Caddyfile.example)
+
 ## Recommended deployment hosts
 
 Best open-source-friendly options for this app:
@@ -124,6 +130,86 @@ Managed fallback options if wanted later:
 - Render
 - Railway
 - Azure App Service
+
+## Subdomain deployment: reliability.whiteley.work
+
+Recommended production shape:
+
+- app container runs locally on the server at `127.0.0.1:8000`
+- Caddy terminates HTTPS for `reliability.whiteley.work`
+- Caddy reverse-proxies traffic to the Flask app
+
+### 1. DNS
+
+Create a DNS record for the subdomain:
+
+- `A` record: `reliability.whiteley.work` → your server IPv4 address
+- optional `AAAA` record: `reliability.whiteley.work` → your server IPv6 address
+
+### 2. Start the app on the server
+
+From the server checkout of this repo:
+
+```powershell
+docker compose -f deploy/compose.production.yaml up -d --build
+```
+
+This production compose file:
+
+- binds the app to `127.0.0.1:8000` only
+- enables proxy-aware handling with `TRUST_PROXY=1`
+- sets `PREFERRED_URL_SCHEME=https`
+
+### 3. Configure Caddy
+
+Copy [deploy/Caddyfile.example](deploy/Caddyfile.example) into your live Caddy config and reload Caddy.
+
+Example site block:
+
+```caddyfile
+reliability.whiteley.work {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8000
+}
+```
+
+### 4. Open ports
+
+Ensure the server allows inbound:
+
+- `80/tcp`
+- `443/tcp`
+
+### 5. Verify the deployment
+
+Check these URLs after DNS and proxy setup:
+
+- `https://reliability.whiteley.work/`
+- `https://reliability.whiteley.work/healthz`
+
+Expected health response:
+
+```json
+{"service":"reliability-web-tool","status":"ok"}
+```
+
+### 6. Update the app after future pushes
+
+On the server:
+
+```powershell
+git pull
+docker compose -f deploy/compose.production.yaml up -d --build
+```
+
+### What is still manual
+
+This repo is now prepared for subdomain deployment, but these steps still have to be performed on the actual host or DNS provider:
+
+- create the `reliability.whiteley.work` DNS record
+- install or configure Caddy on the server
+- reload the reverse proxy after adding the site block
+- run the production compose stack on the server
 
 ## Docker test
 

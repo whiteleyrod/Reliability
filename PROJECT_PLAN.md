@@ -36,6 +36,7 @@ This plan now also serves as an implementation record.
 - Optional landing-page user guide
 - Health-check endpoint for deployment verification
 - Basic automated CI workflow for helper and plotting smoke tests
+- Reverse-proxy-safe app configuration for subdomain deployment
 - Deployment support via `waitress`, `wsgi.py`, `run_web.py`, `Dockerfile`, `compose.yaml`, and `Procfile`
 - GitHub repository setup and pushed updates
 
