@@ -267,15 +267,20 @@ def summarise_series(series: pd.Series) -> dict:
             "mean": None,
             "sd": None,
             "median": None,
+            "iqr": None,
             "min": None,
             "max": None,
         }
+
+    q1 = cleaned.quantile(0.25)
+    q3 = cleaned.quantile(0.75)
 
     return {
         "count": int(cleaned.count()),
         "mean": to_float(cleaned.mean()),
         "sd": to_float(cleaned.std(ddof=1)) if cleaned.count() > 1 else 0.0,
         "median": to_float(cleaned.median()),
+        "iqr": to_float(q3 - q1),
         "min": to_float(cleaned.min()),
         "max": to_float(cleaned.max()),
     }
@@ -302,6 +307,8 @@ def build_observation_summaries(
             "observation": subject_labels,
             "mean": wide_frame.mean(axis=1),
             "sd": wide_frame.std(axis=1, ddof=1).fillna(0.0),
+            "median": wide_frame.median(axis=1),
+            "iqr": wide_frame.quantile(0.75, axis=1) - wide_frame.quantile(0.25, axis=1),
             "min": wide_frame.min(axis=1),
             "max": wide_frame.max(axis=1),
         }
@@ -316,6 +323,8 @@ def build_observation_summaries(
                 "observation": str(row["observation"]),
                 "mean": to_float(row["mean"]),
                 "sd": to_float(row["sd"]),
+                "median": to_float(row["median"]),
+                "iqr": to_float(row["iqr"]),
                 "min": to_float(row["min"]),
                 "max": to_float(row["max"]),
             }
@@ -457,7 +466,7 @@ def build_typical_error_table(wide_frame: pd.DataFrame) -> list[dict]:
 def extract_ci_bounds(ci_value: object) -> tuple[float | None, float | None]:
     if isinstance(ci_value, str):
         stripped = ci_value.strip("[]()")
-        parts = [part.strip() for part in stripped.split(",") if part.strip()]
+        parts = [part.strip() for part in re.split(r"[,;\s]+", stripped) if part.strip()]
         if len(parts) == 2:
             return to_float(float(parts[0])), to_float(float(parts[1]))
         return None, None
@@ -541,8 +550,12 @@ def analyse_pair_result(
         raise AnalysisError(f"The selected ICC model could not be calculated for {pair_definition['pair_label']}.")
 
     selected_row = icc_row.iloc[0]
-    ci_lower, ci_upper = extract_ci_bounds(selected_row.get("CI95%"))
+    ci_value = selected_row.get("CI95", selected_row.get("CI95%"))
+    ci_lower, ci_upper = extract_ci_bounds(ci_value)
     overall_summary = summarise_series(wide_frame.stack())
+    row_means = wide_frame.mean(axis=1)
+    residual_mse = to_float(wide_frame.sub(row_means, axis=0).pow(2).to_numpy().mean())
+    overall_summary["residual_mse"] = residual_mse
     column_summaries = build_column_summaries(wide_frame, measurement_columns)
     observation_summaries, observation_total = build_observation_summaries(wide_frame, subject_labels)
     pair_metrics = build_typical_error_table(wide_frame)

@@ -255,7 +255,16 @@
 
           <div class="field-grid three-up">
             <label>
-              <span>Study design</span>
+              <span class="field-label">Study design
+                <span class="tooltip" tabindex="0" aria-label="Study design help">
+                  <span class="tooltip-trigger">?</span>
+                  <span class="tooltip-content">
+                    <strong>One-way random</strong>: use when each subject may be rated by a different random set of raters or occasions.<br />
+                    <strong>Two-way random</strong>: use when the same raters or occasions score every subject and you want to generalise beyond those raters.<br />
+                    <strong>Two-way mixed</strong>: use when the same fixed raters or devices score every subject and you only care about those exact raters.
+                  </span>
+                </span>
+              </span>
               <select name="study_design">
                 <option value="one_way_random" {% if form_state.study_design == 'one_way_random' %}selected{% endif %}>One-way random</option>
                 <option value="two_way_random" {% if form_state.study_design == 'two_way_random' %}selected{% endif %}>Two-way random</option>
@@ -264,7 +273,15 @@
             </label>
 
             <label>
-              <span>Agreement target</span>
+              <span class="field-label">Agreement target
+                <span class="tooltip" tabindex="0" aria-label="Agreement target help">
+                  <span class="tooltip-trigger">?</span>
+                  <span class="tooltip-content">
+                    <strong>Absolute agreement</strong>: use when raters should give nearly the same numeric value, so both shifts and rank-order differences matter.<br />
+                    <strong>Consistency</strong>: use when you mainly care whether raters rank subjects similarly, even if one rater is systematically higher or lower.
+                  </span>
+                </span>
+              </span>
               <select name="agreement_definition">
                 <option value="absolute" {% if form_state.agreement_definition == 'absolute' %}selected{% endif %}>Absolute agreement</option>
                 <option value="consistency" {% if form_state.agreement_definition == 'consistency' %}selected{% endif %}>Consistency</option>
@@ -272,7 +289,15 @@
             </label>
 
             <label>
-              <span>Measurement unit</span>
+              <span class="field-label">Measurement unit
+                <span class="tooltip" tabindex="0" aria-label="Measurement unit help">
+                  <span class="tooltip-trigger">?</span>
+                  <span class="tooltip-content">
+                    <strong>Single measurement</strong>: use when decisions will be based on one rater, one trial, or one occasion at a time.<br />
+                    <strong>Average measurement</strong>: use when the final score will be the average of multiple raters, trials, or occasions.
+                  </span>
+                </span>
+              </span>
               <select name="measurement_unit">
                 <option value="single" {% if form_state.measurement_unit == 'single' %}selected{% endif %}>Single measurement</option>
                 <option value="average" {% if form_state.measurement_unit == 'average' %}selected{% endif %}>Average measurement</option>
@@ -414,7 +439,12 @@
           <article class="stat-card">
             <span>Overall mean</span>
             <strong>{{ pair.overall_summary.mean }}</strong>
-            <small>SD {{ pair.overall_summary.sd }}</small>
+            <small>SD {{ pair.overall_summary.sd }} · Median {{ pair.overall_summary.median }} · IQR {{ pair.overall_summary.iqr }}</small>
+          </article>
+          <article class="stat-card">
+            <span>Residual MSE</span>
+            <strong>{{ pair.overall_summary.residual_mse }}</strong>
+            <small>Analysis-level mean squared residual for the selected pair</small>
           </article>
           <article class="stat-card">
             <span>Typical error</span>
@@ -432,6 +462,7 @@
                 <th>Mean</th>
                 <th>SD</th>
                 <th>Median</th>
+                <th>IQR</th>
                 <th>Min</th>
                 <th>Max</th>
               </tr>
@@ -444,6 +475,7 @@
                 <td>{{ row.mean }}</td>
                 <td>{{ row.sd }}</td>
                 <td>{{ row.median }}</td>
+                <td>{{ row.iqr }}</td>
                 <td>{{ row.min }}</td>
                 <td>{{ row.max }}</td>
               </tr>
@@ -459,6 +491,8 @@
                 <th>Observation</th>
                 <th>Mean</th>
                 <th>SD</th>
+                <th>Median</th>
+                <th>IQR</th>
                 <th>Min</th>
                 <th>Max</th>
               </tr>
@@ -469,6 +503,8 @@
                 <td>{{ row.observation }}</td>
                 <td>{{ row.mean }}</td>
                 <td>{{ row.sd }}</td>
+                <td>{{ row.median }}</td>
+                <td>{{ row.iqr }}</td>
                 <td>{{ row.min }}</td>
                 <td>{{ row.max }}</td>
               </tr>
