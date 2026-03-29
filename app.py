@@ -1695,6 +1695,15 @@ def index() -> str:
     )
 
 
+@app.get("/healthz")
+def healthcheck() -> tuple[dict[str, str], int]:
+    ensure_storage()
+    return {
+        "status": "ok",
+        "service": "reliability-web-tool",
+    }, 200
+
+
 @app.get("/plots/<analysis_id>/<pair_key>/<plot_kind>.<file_format>")
 def plot_file(analysis_id: str, pair_key: str, plot_kind: str, file_format: str):
     ensure_storage()

@@ -34,6 +34,8 @@ This plan now also serves as an implementation record.
 - CSV export of analysed source data
 - Post-analysis export chooser in the UI
 - Optional landing-page user guide
+- Health-check endpoint for deployment verification
+- Basic automated CI workflow for helper and plotting smoke tests
 - Deployment support via `waitress`, `wsgi.py`, `run_web.py`, `Dockerfile`, `compose.yaml`, and `Procfile`
 - GitHub repository setup and pushed updates
 
@@ -41,7 +43,7 @@ This plan now also serves as an implementation record.
 
 - Long-format data mapping is not yet implemented as a full workflow
 - Missing-data handling is currently drop-complete-cases per selected pair, with reporting but limited user options
-- Automated test coverage is still limited and mostly based on targeted validation scripts
+- Automated test coverage is still limited, though a basic CI workflow now runs helper and plotting smoke tests
 - Interpretation guidance is present in a limited form and could be expanded
 
 ## 1. Goal

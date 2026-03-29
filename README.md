@@ -20,6 +20,8 @@ Current build includes:
 - single PDF report export with analysed data first, analysis description, package list, commands used, results, and figures
 - DOCX report export with figures embedded as SVG image parts plus Word-compatible PNG fallbacks
 - CSV export of the analysed source data used in each reliability analysis
+- health endpoint for container and platform checks at `/healthz`
+- basic automated CI coverage for plotting and core helper functions
 - deployment-ready WSGI runner with `waitress`
 - Docker, Compose, and Procfile deployment support
 
@@ -81,6 +83,20 @@ Then open http://127.0.0.1:8000
 - seaborn
 - python-docx
 
+## Automated checks
+
+The repo now includes a GitHub Actions workflow that installs dependencies and runs:
+
+```powershell
+python -m unittest discover -s tests -p "test_*.py"
+```
+
+Local smoke-check before pushing:
+
+```powershell
+python -m unittest discover -s tests -p "test_*.py"
+```
+
 ## Deployment note
 
 This remains a Flask web app and now includes [wsgi.py](wsgi.py), [run_web.py](run_web.py), [Dockerfile](Dockerfile), [compose.yaml](compose.yaml), and [Procfile](Procfile) for deployment.
@@ -116,3 +132,5 @@ docker compose up --build
 ```
 
 Then open http://127.0.0.1:8000
+
+Container health can be checked at http://127.0.0.1:8000/healthz
