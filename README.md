@@ -14,7 +14,7 @@ Current build includes:
 - descriptive summaries for the full analysed group
 - per-observation summaries
 - typical error, bias, and limits of agreement
-- square scatter plots with a `y = x` reference line
+- square scatter plots with a `y = x` reference line plus shaded 95% confidence intervals around the line of best fit
 - Bland-Altman plots centered symmetrically around 0 on the y-axis
 - SVG preview and SVG/PDF download routes
 - single PDF report export with analysed data first, analysis description, package list, commands used, results, and figures

@@ -493,6 +493,72 @@ def extract_ci_bounds(ci_value: object) -> tuple[float | None, float | None]:
     return None, None
 
 
+def approximate_t_critical_95(degrees_of_freedom: int) -> float:
+    lookup = [
+        (1, 12.706),
+        (2, 4.303),
+        (3, 3.182),
+        (4, 2.776),
+        (5, 2.571),
+        (6, 2.447),
+        (7, 2.365),
+        (8, 2.306),
+        (9, 2.262),
+        (10, 2.228),
+        (12, 2.179),
+        (15, 2.131),
+        (20, 2.086),
+        (25, 2.060),
+        (30, 2.042),
+        (40, 2.021),
+        (60, 2.000),
+        (120, 1.980),
+    ]
+
+    for max_df, critical_value in lookup:
+        if degrees_of_freedom <= max_df:
+            return critical_value
+
+    return 1.960
+
+
+def build_regression_confidence_band(x_values: np.ndarray, y_values: np.ndarray) -> dict | None:
+    if len(x_values) < 3 or np.allclose(x_values, x_values[0]):
+        return None
+
+    slope, intercept = np.polyfit(x_values, y_values, 1)
+    x_grid = np.linspace(float(np.min(x_values)), float(np.max(x_values)), 200)
+    fit_line = intercept + slope * x_grid
+    fitted_values = intercept + slope * x_values
+    residuals = y_values - fitted_values
+    degrees_of_freedom = len(x_values) - 2
+
+    if degrees_of_freedom <= 0:
+        return None
+
+    residual_standard_error = float(np.sqrt(np.sum(residuals**2) / degrees_of_freedom))
+    x_mean = float(np.mean(x_values))
+    sum_squared_x = float(np.sum((x_values - x_mean) ** 2))
+
+    if np.isclose(sum_squared_x, 0.0):
+        return None
+
+    critical_value = approximate_t_critical_95(degrees_of_freedom)
+    fit_standard_error = residual_standard_error * np.sqrt(
+        (1 / len(x_values)) + ((x_grid - x_mean) ** 2 / sum_squared_x)
+    )
+    confidence_margin = critical_value * fit_standard_error
+
+    return {
+        "x_grid": x_grid,
+        "fit_line": fit_line,
+        "lower_band": fit_line - confidence_margin,
+        "upper_band": fit_line + confidence_margin,
+        "slope": float(slope),
+        "intercept": float(intercept),
+    }
+
+
 def slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.casefold()).strip("-")
     return slug or "pair"
@@ -1323,6 +1389,7 @@ def build_markdown_report(analysis_record: dict, base_url: str | None = None) ->
 def build_scatter_plot(dataframe: pd.DataFrame, x_column: str, y_column: str) -> plt.Figure:
     x_values = dataframe[x_column].to_numpy(dtype=float)
     y_values = dataframe[y_column].to_numpy(dtype=float)
+    regression_band = build_regression_confidence_band(x_values, y_values)
     lower = float(min(x_values.min(), y_values.min()))
     upper = float(max(x_values.max(), y_values.max()))
     padding = max((upper - lower) * 0.05, 0.1)
@@ -1331,7 +1398,35 @@ def build_scatter_plot(dataframe: pd.DataFrame, x_column: str, y_column: str) ->
 
     figure, axis = plt.subplots(figsize=(6, 6))
     axis.scatter(x_values, y_values, color="#2563eb", edgecolors="white", linewidths=0.8, s=55)
-    axis.plot([axis_min, axis_max], [axis_min, axis_max], linestyle="--", color="#dc2626", linewidth=1.5)
+    if regression_band:
+        axis.fill_between(
+            regression_band["x_grid"],
+            regression_band["lower_band"],
+            regression_band["upper_band"],
+            color="#0f766e",
+            alpha=0.16,
+            label="95% CI of best-fit line",
+            zorder=1,
+        )
+        axis.plot(
+            regression_band["x_grid"],
+            regression_band["fit_line"],
+            color="#0f766e",
+            linewidth=1.8,
+            label=(
+                f"Best fit: y = {regression_band['slope']:.3f}x "
+                f"{regression_band['intercept']:+.3f}"
+            ),
+            zorder=2,
+        )
+    axis.plot(
+        [axis_min, axis_max],
+        [axis_min, axis_max],
+        linestyle="--",
+        color="#dc2626",
+        linewidth=1.5,
+        label="Identity line (y = x)" if regression_band else None,
+    )
     axis.set_xlim(axis_min, axis_max)
     axis.set_ylim(axis_min, axis_max)
     axis.set_aspect("equal", adjustable="box")
@@ -1339,6 +1434,8 @@ def build_scatter_plot(dataframe: pd.DataFrame, x_column: str, y_column: str) ->
     axis.set_ylabel(y_column)
     axis.set_title(f"Scatter plot: {x_column} vs {y_column}")
     axis.grid(alpha=0.25)
+    if regression_band:
+        axis.legend(loc="upper left")
     figure.tight_layout()
     return figure
 
