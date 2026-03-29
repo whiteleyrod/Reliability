@@ -18,6 +18,7 @@ Current build includes:
 - Bland-Altman plots centered symmetrically around 0 on the y-axis
 - SVG preview and SVG/PDF download routes
 - single PDF report export with analysed data first, analysis description, package list, commands used, results, and figures
+- DOCX report export with figures embedded as SVG image parts plus Word-compatible PNG fallbacks
 - CSV export of the analysed source data used in each reliability analysis
 - deployment-ready WSGI runner with `waitress`
 - Docker, Compose, and Procfile deployment support
@@ -68,7 +69,7 @@ Then open http://127.0.0.1:8000
 6. Review the selected columns and primary pair settings.
 7. Confirm the ICC design settings and figure action.
 8. Run the analysis.
-9. Choose whether to keep viewing results in the browser or download a single PDF report.
+9. Choose whether to keep viewing results in the browser or download a PDF or DOCX report.
 
 ## Installed packages
 
@@ -78,6 +79,7 @@ Then open http://127.0.0.1:8000
 - pingouin
 - matplotlib
 - seaborn
+- python-docx
 
 ## Deployment note
 

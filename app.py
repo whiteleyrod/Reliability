@@ -4,6 +4,8 @@ import io
 import json
 import os
 import re
+import zipfile
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from itertools import combinations
 from pathlib import Path
@@ -17,6 +19,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pingouin as pg
+from docx import Document
+from docx.shared import Inches
 from flask import Flask, abort, redirect, render_template, request, send_file, url_for
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -35,6 +39,18 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 ANALYSIS_DIR = DATA_DIR / "analyses"
 ALLOWED_EXTENSIONS = {"csv", "xlsx"}
 PAIR_PATTERN = re.compile(r"^(?P<label>.+?)\s+Test\s+(?P<test>[12])(?:\.\d+)?\s*$", re.IGNORECASE)
+DOCX_XML_NAMESPACES = {
+    "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+    "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    "rel": "http://schemas.openxmlformats.org/package/2006/relationships",
+    "ct": "http://schemas.openxmlformats.org/package/2006/content-types",
+    "asvg": "http://schemas.microsoft.com/office/drawing/2016/SVG/main",
+}
+SVG_BLIP_EXTENSION_URI = "{96DAC541-7B7A-43D3-8B79-37D633B846F1}"
+IMAGE_RELATIONSHIP_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+
+for prefix, namespace in DOCX_XML_NAMESPACES.items():
+    ET.register_namespace(prefix, namespace)
 
 
 class AnalysisError(ValueError):
@@ -752,6 +768,133 @@ def dataframe_for_pdf(dataframe: pd.DataFrame, max_rows: int | None = None) -> l
     return table_rows
 
 
+def xml_tag(namespace_key: str, tag_name: str) -> str:
+    return f"{{{DOCX_XML_NAMESPACES[namespace_key]}}}{tag_name}"
+
+
+def add_docx_table(document: Document, dataframe: pd.DataFrame, max_rows: int | None = None) -> None:
+    table_rows = dataframe_for_pdf(dataframe, max_rows=max_rows)
+    if not table_rows or not table_rows[0]:
+        document.add_paragraph("No rows available.")
+        return
+
+    table = document.add_table(rows=len(table_rows), cols=len(table_rows[0]))
+    table.style = "Table Grid"
+
+    for row_index, row_values in enumerate(table_rows):
+        for column_index, value in enumerate(row_values):
+            cell = table.cell(row_index, column_index)
+            cell.text = value
+            if row_index == 0:
+                for run in cell.paragraphs[0].runs:
+                    run.bold = True
+
+
+def figure_to_bytes(figure: plt.Figure, file_format: str) -> bytes:
+    buffer = io.BytesIO()
+    save_kwargs = {"format": file_format, "bbox_inches": "tight"}
+    if file_format == "png":
+        save_kwargs["dpi"] = 220
+    figure.savefig(buffer, **save_kwargs)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def figure_to_docx_assets(figure: plt.Figure) -> tuple[bytes, bytes]:
+    png_bytes = figure_to_bytes(figure, "png")
+    svg_bytes = figure_to_bytes(figure, "svg")
+    plt.close(figure)
+    return png_bytes, svg_bytes
+
+
+def embed_svgs_in_docx(docx_bytes: bytes, svg_images: list[bytes]) -> bytes:
+    if not svg_images:
+        return docx_bytes
+
+    with zipfile.ZipFile(io.BytesIO(docx_bytes), "r") as source_zip:
+        packaged_files = {name: source_zip.read(name) for name in source_zip.namelist()}
+
+    document_xml_name = "word/document.xml"
+    relationships_xml_name = "word/_rels/document.xml.rels"
+    content_types_xml_name = "[Content_Types].xml"
+
+    document_root = ET.fromstring(packaged_files[document_xml_name])
+    relationships_root = ET.fromstring(packaged_files[relationships_xml_name])
+    content_types_root = ET.fromstring(packaged_files[content_types_xml_name])
+
+    blips = document_root.findall(".//a:blip", DOCX_XML_NAMESPACES)
+    if len(blips) < len(svg_images):
+        raise AnalysisError("The DOCX report could not be patched with SVG figures.")
+
+    relationship_numbers = [
+        int(match.group(1))
+        for relationship in relationships_root.findall(xml_tag("rel", "Relationship"))
+        if (match := re.fullmatch(r"rId(\d+)", relationship.get("Id", "")))
+    ]
+    next_relationship_number = max(relationship_numbers, default=0) + 1
+    existing_media_names = {name.rsplit("/", 1)[-1] for name in packaged_files if name.startswith("word/media/")}
+
+    for image_index, (blip, svg_bytes) in enumerate(zip(blips, svg_images), start=1):
+        media_name = f"svg-image-{image_index}.svg"
+        while media_name in existing_media_names:
+            image_index += 1
+            media_name = f"svg-image-{image_index}.svg"
+        existing_media_names.add(media_name)
+
+        relationship_id = f"rId{next_relationship_number}"
+        next_relationship_number += 1
+
+        ET.SubElement(
+            relationships_root,
+            xml_tag("rel", "Relationship"),
+            {
+                "Id": relationship_id,
+                "Type": IMAGE_RELATIONSHIP_TYPE,
+                "Target": f"media/{media_name}",
+            },
+        )
+
+        extension_list = blip.find("a:extLst", DOCX_XML_NAMESPACES)
+        if extension_list is None:
+            extension_list = ET.SubElement(blip, xml_tag("a", "extLst"))
+
+        svg_extension = ET.SubElement(
+            extension_list,
+            xml_tag("a", "ext"),
+            {"uri": SVG_BLIP_EXTENSION_URI},
+        )
+        ET.SubElement(
+            svg_extension,
+            xml_tag("asvg", "svgBlip"),
+            {xml_tag("r", "embed"): relationship_id},
+        )
+
+        packaged_files[f"word/media/{media_name}"] = svg_bytes
+
+    has_svg_content_type = any(
+        default.get("Extension") == "svg"
+        for default in content_types_root.findall(xml_tag("ct", "Default"))
+    )
+    if not has_svg_content_type:
+        ET.SubElement(
+            content_types_root,
+            xml_tag("ct", "Default"),
+            {"Extension": "svg", "ContentType": "image/svg+xml"},
+        )
+
+    packaged_files[document_xml_name] = ET.tostring(document_root, encoding="utf-8", xml_declaration=True)
+    packaged_files[relationships_xml_name] = ET.tostring(relationships_root, encoding="utf-8", xml_declaration=True)
+    packaged_files[content_types_xml_name] = ET.tostring(content_types_root, encoding="utf-8", xml_declaration=True)
+
+    output_buffer = io.BytesIO()
+    with zipfile.ZipFile(output_buffer, "w", compression=zipfile.ZIP_DEFLATED) as target_zip:
+        for file_name, file_bytes in packaged_files.items():
+            target_zip.writestr(file_name, file_bytes)
+
+    output_buffer.seek(0)
+    return output_buffer.getvalue()
+
+
 def pdf_table(dataframe: pd.DataFrame, max_rows: int | None = None) -> Table:
     table = Table(dataframe_for_pdf(dataframe, max_rows=max_rows), repeatRows=1)
     table.setStyle(
@@ -901,6 +1044,110 @@ def build_pdf_report(analysis_record: dict) -> bytes:
     document.build(story)
     buffer.seek(0)
     return buffer.getvalue()
+
+
+def build_docx_report(analysis_record: dict) -> bytes:
+    config = analysis_record["config"]
+    upload_record = load_upload(config["upload_id"])
+    if upload_record is None:
+        raise AnalysisError("The source upload for this analysis is no longer available.")
+
+    document = Document()
+    document.core_properties.title = "Reliability Analysis Report"
+    document.add_heading("Reliability Analysis Report", level=0)
+    document.add_paragraph(f"Generated: {datetime.now().isoformat(timespec='seconds')}")
+
+    package_versions = load_package_versions()
+    source_frame = build_source_data_export_frame(upload_record, analysis_record)
+    selected_pairs = ", ".join(config.get("selected_pair_labels", [])) or "Manual column selection"
+    svg_images: list[bytes] = []
+
+    document.add_heading("1. Analysed source data", level=1)
+    document.add_paragraph(f"Source file: {upload_record['original_filename']}")
+    document.add_paragraph(f"Worksheet: {config['selected_sheet']}")
+    document.add_paragraph(f"Selected pairs: {selected_pairs}")
+    document.add_paragraph(f"Observation identifier: {config.get('subject_column') or 'Generated row labels'}")
+    add_docx_table(document, source_frame)
+
+    document.add_heading("2. Analysis description", level=1)
+    document.add_paragraph(f"Study design: {analysis_record['recommendation']['design_label']}")
+    document.add_paragraph(f"Agreement target: {analysis_record['recommendation']['agreement_label']}")
+    document.add_paragraph(f"Measurement unit: {analysis_record['recommendation']['measurement_label']}")
+    document.add_paragraph(f"Rationale: {analysis_record['recommendation']['rationale']}")
+    document.add_paragraph(f"Analysed pairs: {analysis_record['dataset_summary']['pair_count']}")
+    document.add_paragraph(f"Source rows: {analysis_record['dataset_summary']['source_rows']}")
+
+    document.add_heading("Python packages used", level=2)
+    for package in package_versions:
+        document.add_paragraph(package, style="List Bullet")
+
+    document.add_heading("Commands and analysis steps used", level=2)
+    document.add_paragraph("Run commands:")
+    document.add_paragraph("python app.py")
+    document.add_paragraph("python run_web.py")
+    document.add_paragraph("Analysis workflow:")
+    for step in [
+        "Load the worksheet and selected columns.",
+        "Drop rows with missing values for each selected pair.",
+        "Reshape the pair data and run pingouin.intraclass_corr(...).",
+        "Compute typical error as SD(y − x) / √2.",
+        "Compute bias and limits of agreement as bias ± 1.96 × SD(y − x).",
+        "Generate square scatter plots with a y = x line and Bland-Altman plots centered symmetrically around 0.",
+    ]:
+        document.add_paragraph(step, style="List Number")
+
+    for index, pair_result in enumerate(analysis_record["pair_results"], start=1):
+        if index > 1:
+            document.add_page_break()
+
+        pair_source_frame = build_source_data_frame(upload_record, analysis_record, pair_result)
+        overall_summary_frame = pd.DataFrame([pair_result["overall_summary"]])
+        column_summary_frame = pd.DataFrame(pair_result["column_summaries"])
+        observation_summary_frame = pd.DataFrame(pair_result["observation_summaries"])
+        pair_metrics_frame = pd.DataFrame(pair_result["pair_metrics"])
+        pair_frame = pair_source_frame[[pair_result["primary_x_column"], pair_result["primary_y_column"]]].copy()
+
+        document.add_heading(f"3.{index} Results for {pair_result['pair_label']}", level=1)
+        document.add_paragraph(f"Columns: {pair_result['primary_x_column']} vs {pair_result['primary_y_column']}")
+        document.add_paragraph(f"ICC model: {pair_result['icc_result']['model']}")
+        document.add_paragraph(f"ICC estimate: {pair_result['icc_result']['estimate']}")
+        document.add_paragraph(f"95% CI: {pair_result['icc_result']['ci_lower']} to {pair_result['icc_result']['ci_upper']}")
+        document.add_paragraph(f"F value: {pair_result['icc_result']['f_value']}")
+        document.add_paragraph(f"P value: {pair_result['icc_result']['p_value']}")
+        document.add_paragraph(f"Description: {pair_result['icc_result']['description']}")
+        document.add_paragraph(f"Complete observations analysed: {pair_result['dataset_summary']['observations']}")
+        document.add_paragraph(f"Dropped rows due to missing values: {pair_result['dataset_summary']['dropped_rows']}")
+        document.add_paragraph(f"Typical error formula: {pair_result['typical_error_formula']}")
+
+        document.add_heading("Overall descriptive summary", level=2)
+        add_docx_table(document, overall_summary_frame)
+        document.add_heading("Series summaries", level=2)
+        add_docx_table(document, column_summary_frame)
+        document.add_heading("Observation summaries", level=2)
+        add_docx_table(document, observation_summary_frame)
+        document.add_heading("Typical error and limits of agreement", level=2)
+        add_docx_table(document, pair_metrics_frame)
+        document.add_heading("Source data used for this pair", level=2)
+        add_docx_table(document, pair_source_frame)
+
+        document.add_heading("Figures", level=2)
+        scatter_png, scatter_svg = figure_to_docx_assets(
+            build_scatter_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"])
+        )
+        document.add_paragraph(f"Scatter plot: {pair_result['pair_label']}")
+        document.add_picture(io.BytesIO(scatter_png), width=Inches(6.0))
+        svg_images.append(scatter_svg)
+
+        bland_png, bland_svg = figure_to_docx_assets(
+            build_bland_altman_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"])
+        )
+        document.add_paragraph(f"Bland-Altman plot: {pair_result['pair_label']}")
+        document.add_picture(io.BytesIO(bland_png), width=Inches(6.0))
+        svg_images.append(bland_svg)
+
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return embed_svgs_in_docx(buffer.getvalue(), svg_images)
 
 
 def build_markdown_report(analysis_record: dict, base_url: str | None = None) -> str:
@@ -1400,6 +1647,28 @@ def pdf_report(analysis_id: str):
     return send_file(
         buffer,
         mimetype="application/pdf",
+        as_attachment=True,
+        download_name=download_name,
+    )
+
+
+@app.get("/reports/<analysis_id>.docx")
+def docx_report(analysis_id: str):
+    ensure_storage()
+    analysis_record = load_analysis(analysis_id)
+    if analysis_record is None:
+        abort(404)
+
+    try:
+        docx_bytes = build_docx_report(analysis_record)
+    except AnalysisError:
+        abort(404)
+
+    buffer = io.BytesIO(docx_bytes)
+    download_name = f"reliability-results-{analysis_id}.docx"
+    return send_file(
+        buffer,
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         as_attachment=True,
         download_name=download_name,
     )

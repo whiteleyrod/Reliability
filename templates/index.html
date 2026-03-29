@@ -328,11 +328,12 @@
             <p class="eyebrow">Results ready</p>
             <h2>Choose what to do next</h2>
           </div>
-          <p class="subtle">You can stay in the browser and inspect the results below, or download one PDF containing the analysed data, methods, results, and figures.</p>
+          <p class="subtle">You can stay in the browser and inspect the results below, or download a PDF or DOCX report containing the analysed data, methods, results, and figures.</p>
         </div>
         <div class="download-actions">
           <a class="download-link secondary" href="{{ url_for('index', upload_id=upload.id if upload else None, sheet=selected_sheet, analysis_id=analysis.id) }}#results">View results here</a>
           <a class="download-link" href="{{ url_for('pdf_report', analysis_id=analysis.id) }}">Download results PDF</a>
+          <a class="download-link secondary" href="{{ url_for('docx_report', analysis_id=analysis.id) }}">Download results DOCX</a>
         </div>
       </section>
       {% endif %}
@@ -347,6 +348,7 @@
             <p class="subtle">{{ analysis.recommendation.rationale }}</p>
             <div class="download-actions">
               <a class="download-link" href="{{ url_for('pdf_report', analysis_id=analysis.id) }}">Download full results report (PDF)</a>
+              <a class="download-link secondary" href="{{ url_for('docx_report', analysis_id=analysis.id) }}">Download full results report (DOCX)</a>
               <a class="download-link secondary" href="{{ url_for('source_data_csv', analysis_id=analysis.id) }}">Download analysed source data (CSV)</a>
             </div>
           </div>
