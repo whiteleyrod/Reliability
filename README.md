@@ -24,6 +24,7 @@ Current build includes:
 - basic automated CI coverage for plotting and core helper functions
 - reverse-proxy-safe configuration for subdomain deployment
 - Windows standalone packaging support with PyInstaller
+- Streamlit deployment branch support via `streamlit_app.py`
 - deployment-ready WSGI runner with `waitress`
 - Docker, Compose, and Procfile deployment support
 
@@ -98,6 +99,23 @@ Local smoke-check before pushing:
 ```powershell
 python -m unittest discover -s tests -p "test_*.py"
 ```
+
+## Run the Streamlit version
+
+The `streamlit-deploy` branch adapts the project for Streamlit Community Cloud using [streamlit_app.py](streamlit_app.py).
+
+Local run command:
+
+```powershell
+streamlit run streamlit_app.py
+```
+
+Notes:
+
+- this branch uses `streamlit==1.55.0`
+- `pandas` is pinned to `2.3.3` here because current Streamlit releases require `pandas < 3`
+- a separate repository is not required initially; a dedicated branch is the simplest trial path
+- if the Flask and Streamlit versions diverge substantially over time, splitting them into separate repositories may become cleaner later
 
 ## Build a Windows standalone app
 

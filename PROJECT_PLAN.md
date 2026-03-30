@@ -38,6 +38,7 @@ This plan now also serves as an implementation record.
 - Basic automated CI workflow for helper and plotting smoke tests
 - Reverse-proxy-safe app configuration for subdomain deployment
 - Windows standalone packaging path via PyInstaller
+- Streamlit deployment branch path with a separate Streamlit entry point
 - Deployment support via `waitress`, `wsgi.py`, `run_web.py`, `Dockerfile`, `compose.yaml`, and `Procfile`
 - GitHub repository setup and pushed updates
 
