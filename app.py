@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import sys
 import zipfile
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -30,7 +31,32 @@ from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, S
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
-app = Flask(__name__)
+APP_NAME = "Reliability"
+
+
+def get_resource_dir() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS)
+    return Path(__file__).resolve().parent
+
+
+def get_storage_root() -> Path:
+    if getattr(sys, "frozen", False):
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / APP_NAME
+        return Path.home() / f".{APP_NAME.lower()}"
+    return Path(__file__).resolve().parent
+
+
+RESOURCE_DIR = get_resource_dir()
+STORAGE_ROOT = get_storage_root()
+
+app = Flask(
+    __name__,
+    template_folder=str(RESOURCE_DIR / "templates"),
+    static_folder=str(RESOURCE_DIR / "static"),
+)
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key")
 app.config["PREFERRED_URL_SCHEME"] = os.environ.get("PREFERRED_URL_SCHEME", "http")
@@ -38,8 +64,10 @@ app.config["PREFERRED_URL_SCHEME"] = os.environ.get("PREFERRED_URL_SCHEME", "htt
 if os.environ.get("TRUST_PROXY", "1") == "1":
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1, x_prefix=1)
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = RESOURCE_DIR
 DATA_DIR = BASE_DIR / "instance" / "data"
+if getattr(sys, "frozen", False):
+    DATA_DIR = STORAGE_ROOT / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 ANALYSIS_DIR = DATA_DIR / "analyses"
 ALLOWED_EXTENSIONS = {"csv", "xlsx"}

@@ -23,6 +23,7 @@ Current build includes:
 - health endpoint for container and platform checks at `/healthz`
 - basic automated CI coverage for plotting and core helper functions
 - reverse-proxy-safe configuration for subdomain deployment
+- Windows standalone packaging support with PyInstaller
 - deployment-ready WSGI runner with `waitress`
 - Docker, Compose, and Procfile deployment support
 
@@ -97,6 +98,26 @@ Local smoke-check before pushing:
 ```powershell
 python -m unittest discover -s tests -p "test_*.py"
 ```
+
+## Build a Windows standalone app
+
+This repo can also be packaged into a standalone Windows `.exe` that starts the app locally and opens it in the user's browser.
+
+Build steps:
+
+```powershell
+.\build_windows_exe.ps1
+```
+
+Build output:
+
+- [dist/Reliability.exe](dist/Reliability.exe) after a successful local build
+
+Packaging notes:
+
+- the executable bundles Python, templates, static assets, and the app code
+- uploaded files and analysis outputs are written to the user's local app data folder when running as a packaged app
+- the packaged app opens a local browser session automatically
 
 ## Deployment note
 
