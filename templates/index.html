@@ -309,6 +309,44 @@
           </div>
 
           <fieldset>
+            <legend>Figure color palette</legend>
+            <div class="field-grid palette-field-grid">
+              <label>
+                <span>Preset palette</span>
+                <select name="figure_palette" id="figure-palette-select">
+                  {% for palette in figure_palette_options %}
+                  <option value="{{ palette.key }}" {% if palette.key == form_state.figure_palette %}selected{% endif %}>{{ palette.label }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+
+              <div class="palette-preview-shell">
+                <p class="subtle">Preview of scatter and Bland-Altman styling for the selected palette.</p>
+                <div class="palette-preview-grid">
+                  <article class="plot-card preview-plot-card">
+                    <h3>Scatter preview</h3>
+                    <img
+                      id="scatter-palette-preview"
+                      class="plot-preview-image"
+                      src="{{ url_for('palette_preview', plot_kind='scatter', palette=form_state.figure_palette) }}"
+                      alt="Scatter palette preview"
+                    />
+                  </article>
+                  <article class="plot-card preview-plot-card">
+                    <h3>Bland-Altman preview</h3>
+                    <img
+                      id="bland-palette-preview"
+                      class="plot-preview-image"
+                      src="{{ url_for('palette_preview', plot_kind='bland-altman', palette=form_state.figure_palette) }}"
+                      alt="Bland-Altman palette preview"
+                    />
+                  </article>
+                </div>
+              </div>
+            </div>
+          </fieldset>
+
+          <fieldset>
             <legend>Figure output action</legend>
             <div class="radio-row">
               <label><input type="radio" name="figure_action" value="view" {% if form_state.figure_action == 'view' %}checked{% endif %} /> View only</label>
@@ -599,5 +637,23 @@
       {% endfor %}
       {% endif %}
     </main>
+    <script>
+      (function () {
+        const paletteSelect = document.getElementById("figure-palette-select");
+        const scatterPreview = document.getElementById("scatter-palette-preview");
+        const blandPreview = document.getElementById("bland-palette-preview");
+        if (!paletteSelect || !scatterPreview || !blandPreview) {
+          return;
+        }
+
+        const updatePreview = () => {
+          const palette = encodeURIComponent(paletteSelect.value);
+          scatterPreview.src = "{{ url_for('palette_preview', plot_kind='scatter') }}?palette=" + palette;
+          blandPreview.src = "{{ url_for('palette_preview', plot_kind='bland-altman') }}?palette=" + palette;
+        };
+
+        paletteSelect.addEventListener("change", updatePreview);
+      }());
+    </script>
   </body>
 </html>

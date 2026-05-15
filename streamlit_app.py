@@ -10,9 +10,11 @@ import streamlit as st
 from app import (
     ALLOWED_EXTENSIONS,
     AnalysisError,
+    DEFAULT_FIGURE_PALETTE,
     UPLOAD_DIR,
     analyse_wide_dataset,
     build_bland_altman_plot,
+    build_palette_preview_frame,
     build_docx_report,
     build_html_report,
     build_pdf_report,
@@ -20,6 +22,7 @@ from app import (
     build_source_data_export_frame,
     build_source_data_frame,
     ensure_storage,
+    figure_palette_options,
     figure_to_bytes,
     get_sheet_meta,
     read_dataset,
@@ -89,6 +92,7 @@ def default_measurement_columns(sheet_meta: dict) -> list[str]:
 
 def render_pair_section(upload_record: dict, analysis_record: dict, pair_result: dict) -> None:
     st.subheader(pair_result["pair_label"])
+    figure_palette = analysis_record["config"].get("figure_palette", DEFAULT_FIGURE_PALETTE)
     metric_columns = st.columns(6)
     metric_columns[0].metric("ICC", str(pair_result["icc_result"]["estimate"]))
     metric_columns[1].metric(
@@ -127,10 +131,10 @@ def render_pair_section(upload_record: dict, analysis_record: dict, pair_result:
 
     plot_column_1, plot_column_2 = st.columns(2)
     with plot_column_1:
-        scatter_figure = build_scatter_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"])
+        scatter_figure = build_scatter_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"], figure_palette)
         st.pyplot(scatter_figure, use_container_width=True)
         scatter_svg = figure_to_bytes(
-            build_scatter_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"]),
+            build_scatter_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"], figure_palette),
             "svg",
         )
         st.download_button(
@@ -142,10 +146,10 @@ def render_pair_section(upload_record: dict, analysis_record: dict, pair_result:
         )
 
     with plot_column_2:
-        bland_figure = build_bland_altman_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"])
+        bland_figure = build_bland_altman_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"], figure_palette)
         st.pyplot(bland_figure, use_container_width=True)
         bland_svg = figure_to_bytes(
-            build_bland_altman_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"]),
+            build_bland_altman_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"], figure_palette),
             "svg",
         )
         st.download_button(
@@ -194,6 +198,31 @@ def main() -> None:
     detected_pairs = sheet_meta.get("detected_pairs", [])
     pair_lookup = {pair["key"]: f"{pair['label']}: {pair['test_1']} ↔ {pair['test_2']}" for pair in detected_pairs}
     default_measurements = default_measurement_columns(sheet_meta)
+    palette_options = figure_palette_options()
+    palette_labels = [option["label"] for option in palette_options]
+    palette_keys_by_label = {option["label"]: option["key"] for option in palette_options}
+    default_palette_key = st.session_state.get("figure_palette", DEFAULT_FIGURE_PALETTE)
+    default_palette_label = next(
+        (option["label"] for option in palette_options if option["key"] == default_palette_key),
+        palette_options[0]["label"],
+    )
+
+    selected_palette_label = st.selectbox(
+        "Figure color palette",
+        options=palette_labels,
+        index=palette_labels.index(default_palette_label),
+    )
+    selected_palette_key = palette_keys_by_label[selected_palette_label]
+    st.session_state["figure_palette"] = selected_palette_key
+
+    preview_frame = build_palette_preview_frame()
+    preview_column_1, preview_column_2 = st.columns(2)
+    with preview_column_1:
+        st.caption("Scatter preview")
+        st.pyplot(build_scatter_plot(preview_frame, "Test 1", "Test 2", selected_palette_key), use_container_width=True)
+    with preview_column_2:
+        st.caption("Bland-Altman preview")
+        st.pyplot(build_bland_altman_plot(preview_frame, "Test 1", "Test 2", selected_palette_key), use_container_width=True)
 
     with st.form("analysis-form"):
         subject_options = [""] + sheet_meta["columns"]
@@ -252,6 +281,7 @@ def main() -> None:
                 study_design=STUDY_DESIGN_OPTIONS[study_design_label],
                 agreement_definition=AGREEMENT_OPTIONS[agreement_label],
                 measurement_unit=MEASUREMENT_OPTIONS[measurement_label],
+                figure_palette=selected_palette_key,
                 figure_action="both",
             )
             st.session_state["analysis_record"] = {"id": uuid4().hex, **analysis_result}

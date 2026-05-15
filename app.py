@@ -82,6 +82,53 @@ DOCX_XML_NAMESPACES = {
 }
 SVG_BLIP_EXTENSION_URI = "{96DAC541-7B7A-43D3-8B79-37D633B846F1}"
 IMAGE_RELATIONSHIP_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+FIGURE_PALETTES = {
+    "classic-blue": {
+        "label": "Classic Blue",
+        "scatter_points": "#2563eb",
+        "regression_band": "#0f766e",
+        "regression_line": "#0f766e",
+        "identity_line": "#dc2626",
+        "bland_points": "#0f766e",
+        "zero_line": "#1e293b",
+        "bias_line": "#2563eb",
+        "loa_line": "#dc2626",
+    },
+    "forest-amber": {
+        "label": "Forest Amber",
+        "scatter_points": "#166534",
+        "regression_band": "#b45309",
+        "regression_line": "#b45309",
+        "identity_line": "#7c2d12",
+        "bland_points": "#166534",
+        "zero_line": "#1f2937",
+        "bias_line": "#92400e",
+        "loa_line": "#7c2d12",
+    },
+    "slate-rose": {
+        "label": "Slate Rose",
+        "scatter_points": "#be185d",
+        "regression_band": "#7c3aed",
+        "regression_line": "#7c3aed",
+        "identity_line": "#0f172a",
+        "bland_points": "#be185d",
+        "zero_line": "#334155",
+        "bias_line": "#7c3aed",
+        "loa_line": "#0f172a",
+    },
+    "teal-sand": {
+        "label": "Teal Sand",
+        "scatter_points": "#0f766e",
+        "regression_band": "#c2410c",
+        "regression_line": "#c2410c",
+        "identity_line": "#4338ca",
+        "bland_points": "#0f766e",
+        "zero_line": "#334155",
+        "bias_line": "#c2410c",
+        "loa_line": "#4338ca",
+    },
+}
+DEFAULT_FIGURE_PALETTE = "classic-blue"
 
 for prefix, namespace in DOCX_XML_NAMESPACES.items():
     ET.register_namespace(prefix, namespace)
@@ -89,6 +136,28 @@ for prefix, namespace in DOCX_XML_NAMESPACES.items():
 
 class AnalysisError(ValueError):
     pass
+
+
+def get_figure_palette(palette_key: str | None) -> dict:
+    if palette_key and palette_key in FIGURE_PALETTES:
+        return FIGURE_PALETTES[palette_key]
+    return FIGURE_PALETTES[DEFAULT_FIGURE_PALETTE]
+
+
+def figure_palette_options() -> list[dict[str, str]]:
+    return [
+        {"key": palette_key, "label": palette["label"]}
+        for palette_key, palette in FIGURE_PALETTES.items()
+    ]
+
+
+def build_palette_preview_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "Test 1": [9.8, 10.6, 11.4, 12.8, 13.5, 14.2],
+            "Test 2": [10.1, 10.3, 11.8, 12.4, 13.9, 14.5],
+        }
+    )
 
 
 def ensure_storage() -> None:
@@ -721,6 +790,7 @@ def analyse_wide_dataset(
     study_design: str,
     agreement_definition: str,
     measurement_unit: str,
+    figure_palette: str,
     figure_action: str,
 ) -> dict:
     dataframe = read_dataset(get_upload_path(upload_record), upload_record["file_type"], sheet_name)
@@ -751,6 +821,7 @@ def analyse_wide_dataset(
             "study_design": study_design,
             "agreement_definition": agreement_definition,
             "measurement_unit": measurement_unit,
+            "figure_palette": figure_palette,
             "figure_action": figure_action,
         },
         "recommendation": recommendation,
@@ -834,10 +905,7 @@ def get_pair_result(analysis_record: dict, pair_key: str | None) -> dict:
 
 
 def markdown_table(dataframe: pd.DataFrame) -> str:
-    formatted = dataframe.copy().replace({np.nan: ""})
-    numeric_columns = formatted.select_dtypes(include=[np.number]).columns
-    if len(numeric_columns) > 0:
-        formatted[numeric_columns] = formatted[numeric_columns].round(4)
+    formatted = dataframe_for_html(dataframe)
     return formatted.to_markdown(index=False)
 
 
@@ -862,6 +930,24 @@ def html_table(dataframe: pd.DataFrame, max_rows: int | None = None) -> str:
     return frame.to_html(index=False, classes=["report-table"], border=0, escape=True)
 
 
+def primary_pair_metric(pair_result: dict) -> dict | None:
+    pair_metrics = pair_result.get("pair_metrics", [])
+    if not pair_metrics:
+        return None
+    return pair_metrics[0]
+
+
+def pair_metric_value_lines(pair_result: dict) -> list[str]:
+    metric = primary_pair_metric(pair_result)
+    if metric is None:
+        return []
+
+    return [
+        f"Typical error: {metric['typical_error']}",
+        f"Minimum detectable change (95%): {metric['minimum_detectable_change_95']}",
+    ]
+
+
 def load_package_versions() -> list[str]:
     requirements_path = BASE_DIR / "requirements.txt"
     if not requirements_path.exists():
@@ -876,20 +962,49 @@ def load_package_versions() -> list[str]:
 
 
 def dataframe_for_pdf(dataframe: pd.DataFrame, max_rows: int | None = None) -> list[list[str]]:
-    frame = dataframe.copy().replace({np.nan: ""})
-    if max_rows is not None:
-        frame = frame.head(max_rows)
+    frame = dataframe_for_html(dataframe, max_rows=max_rows)
 
     table_rows: list[list[str]] = [list(frame.columns)]
     for _, row in frame.iterrows():
-        formatted_row: list[str] = []
-        for value in row.tolist():
-            if isinstance(value, float):
-                formatted_row.append(f"{value:.4f}")
-            else:
-                formatted_row.append(str(value))
-        table_rows.append(formatted_row)
+        table_rows.append([str(value) for value in row.tolist()])
     return table_rows
+
+
+def export_table_column_widths(column_names: list[str], total_width: float) -> list[float] | None:
+    column_count = len(column_names)
+    if column_count == 0:
+        return None
+    if column_count == 1:
+        return [total_width]
+
+    key_columns = {"name", "pair", "observation", "subject", "series", "first_column", "second_column"}
+    variable_index = next(
+        (index for index, column_name in enumerate(column_names) if str(column_name).strip().casefold() in key_columns),
+        0,
+    )
+
+    first_width = min(max(total_width * 0.18, 72), total_width * 0.24)
+    remaining_width = max(total_width - first_width, total_width * 0.4)
+    other_width = remaining_width / (column_count - 1)
+    widths = [other_width for _ in column_names]
+    widths[variable_index] = first_width
+    return widths
+
+
+def pdf_table_cell(value: str, style) -> Paragraph:
+    safe_value = html.escape(value).replace("\n", "<br/>")
+    return Paragraph(safe_value, style)
+
+
+def docx_table_column_widths(column_names: list[str]) -> list[Inches]:
+    column_count = len(column_names)
+    if column_count == 0:
+        return []
+    if column_count == 1:
+        return [Inches(6.8)]
+
+    widths = export_table_column_widths(column_names, 6.8)
+    return [Inches(width) for width in widths] if widths else []
 
 
 def xml_tag(namespace_key: str, tag_name: str) -> str:
@@ -904,11 +1019,15 @@ def add_docx_table(document: Document, dataframe: pd.DataFrame, max_rows: int | 
 
     table = document.add_table(rows=len(table_rows), cols=len(table_rows[0]))
     table.style = "Table Grid"
+    table.autofit = False
+    column_widths = docx_table_column_widths(table_rows[0])
 
     for row_index, row_values in enumerate(table_rows):
         for column_index, value in enumerate(row_values):
             cell = table.cell(row_index, column_index)
             cell.text = value
+            if column_index < len(column_widths):
+                cell.width = column_widths[column_index]
             if row_index == 0:
                 for run in cell.paragraphs[0].runs:
                     run.bold = True
@@ -1020,7 +1139,22 @@ def embed_svgs_in_docx(docx_bytes: bytes, svg_images: list[bytes]) -> bytes:
 
 
 def pdf_table(dataframe: pd.DataFrame, max_rows: int | None = None) -> Table:
-    table = Table(dataframe_for_pdf(dataframe, max_rows=max_rows), repeatRows=1)
+    styles = getSampleStyleSheet()
+    wrapped_style = styles["BodyText"].clone("WrappedTableCell")
+    wrapped_style.fontName = "Helvetica"
+    wrapped_style.fontSize = 8
+    wrapped_style.leading = 10
+    wrapped_style.splitLongWords = 1
+    wrapped_style.wordWrap = "CJK"
+
+    table_rows = dataframe_for_pdf(dataframe, max_rows=max_rows)
+    column_widths = export_table_column_widths(table_rows[0], 7.0 * inch) if table_rows else None
+    formatted_rows = [
+        [pdf_table_cell(str(value), wrapped_style) for value in row_values]
+        for row_values in table_rows
+    ]
+
+    table = Table(formatted_rows, repeatRows=1, colWidths=column_widths)
     table.setStyle(
         TableStyle(
             [
@@ -1030,8 +1164,11 @@ def pdf_table(dataframe: pd.DataFrame, max_rows: int | None = None) -> Table:
                 ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#94a3b8")),
                 ("BACKGROUND", (0, 1), (-1, -1), colors.white),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
                 ("FONTSIZE", (0, 0), (-1, -1), 8),
                 ("LEADING", (0, 0), (-1, -1), 10),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
             ]
         )
     )
@@ -1061,6 +1198,7 @@ def build_pdf_report(analysis_record: dict) -> bytes:
     package_versions = load_package_versions()
     source_frame = build_source_data_export_frame(upload_record, analysis_record)
     selected_pairs = ", ".join(config.get("selected_pair_labels", [])) or "Manual column selection"
+    figure_palette = config.get("figure_palette", DEFAULT_FIGURE_PALETTE)
 
     story.extend(
         [
@@ -1119,11 +1257,11 @@ def build_pdf_report(analysis_record: dict) -> bytes:
 
         pair_frame = pair_source_frame[[pair_result["primary_x_column"], pair_result["primary_y_column"]]].copy()
         scatter_image = figure_to_pdf_image(
-            build_scatter_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"]),
+            build_scatter_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"], figure_palette),
             width_inches=5.8,
         )
         bland_image = figure_to_pdf_image(
-            build_bland_altman_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"]),
+            build_bland_altman_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"], figure_palette),
             width_inches=5.8,
         )
 
@@ -1140,6 +1278,7 @@ def build_pdf_report(analysis_record: dict) -> bytes:
                 Paragraph(f"Description: {pair_result['icc_result']['description']}", styles["Normal"]),
                 Paragraph(f"Complete observations analysed: {pair_result['dataset_summary']['observations']}", styles["Normal"]),
                 Paragraph(f"Dropped rows due to missing values: {pair_result['dataset_summary']['dropped_rows']}", styles["Normal"]),
+                *[Paragraph(line, styles["Normal"]) for line in pair_metric_value_lines(pair_result)],
                 Paragraph(f"Typical error formula: {pair_result['typical_error_formula']}", styles["Normal"]),
                 Paragraph(f"Minimum detectable change formula: {pair_result['minimum_detectable_change_formula']}", styles["Normal"]),
                 Spacer(1, 0.12 * inch),
@@ -1186,6 +1325,7 @@ def build_docx_report(analysis_record: dict) -> bytes:
     package_versions = load_package_versions()
     source_frame = build_source_data_export_frame(upload_record, analysis_record)
     selected_pairs = ", ".join(config.get("selected_pair_labels", [])) or "Manual column selection"
+    figure_palette = config.get("figure_palette", DEFAULT_FIGURE_PALETTE)
     svg_images: list[bytes] = []
 
     document.add_heading("1. Analysed source data", level=1)
@@ -1244,6 +1384,8 @@ def build_docx_report(analysis_record: dict) -> bytes:
         document.add_paragraph(f"Description: {pair_result['icc_result']['description']}")
         document.add_paragraph(f"Complete observations analysed: {pair_result['dataset_summary']['observations']}")
         document.add_paragraph(f"Dropped rows due to missing values: {pair_result['dataset_summary']['dropped_rows']}")
+        for line in pair_metric_value_lines(pair_result):
+            document.add_paragraph(line)
         document.add_paragraph(f"Typical error formula: {pair_result['typical_error_formula']}")
         document.add_paragraph(f"Minimum detectable change formula: {pair_result['minimum_detectable_change_formula']}")
 
@@ -1260,14 +1402,14 @@ def build_docx_report(analysis_record: dict) -> bytes:
 
         document.add_heading("Figures", level=2)
         scatter_png, scatter_svg = figure_to_docx_assets(
-            build_scatter_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"])
+            build_scatter_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"], figure_palette)
         )
         document.add_paragraph(f"Scatter plot: {pair_result['pair_label']}")
         document.add_picture(io.BytesIO(scatter_png), width=Inches(6.0))
         svg_images.append(scatter_svg)
 
         bland_png, bland_svg = figure_to_docx_assets(
-            build_bland_altman_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"])
+            build_bland_altman_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"], figure_palette)
         )
         document.add_paragraph(f"Bland-Altman plot: {pair_result['pair_label']}")
         document.add_picture(io.BytesIO(bland_png), width=Inches(6.0))
@@ -1396,6 +1538,7 @@ def build_markdown_report(analysis_record: dict, base_url: str | None = None) ->
                 f"- Description: {pair_result['icc_result']['description']}",
                 f"- Complete observations analysed: {pair_result['dataset_summary']['observations']}",
                 f"- Dropped rows due to missing values: {pair_result['dataset_summary']['dropped_rows']}",
+                *[f"- {line}" for line in pair_metric_value_lines(pair_result)],
                 f"- Typical error formula: {pair_result['typical_error_formula']}",
                 f"- Minimum detectable change formula: {pair_result['minimum_detectable_change_formula']}",
                 "",
@@ -1475,9 +1618,10 @@ def build_html_report(analysis_record: dict, base_url: str | None = None) -> str
         "    h1 { margin-top: 0; }",
         "    p, li { line-height: 1.55; }",
         "    .meta-list { padding-left: 20px; }",
-        "    .report-table { width: 100%; border-collapse: collapse; margin: 14px 0 24px; font-size: 0.95rem; }",
-        "    .report-table th, .report-table td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; vertical-align: top; }",
+        "    .report-table { width: 100%; border-collapse: collapse; margin: 14px 0 24px; font-size: 0.95rem; table-layout: fixed; }",
+        "    .report-table th, .report-table td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; vertical-align: top; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }",
         "    .report-table thead th { background: #dbeafe; }",
+        "    .report-table th:first-child, .report-table td:first-child { width: 18%; }",
         "    .report-empty { color: #475569; font-style: italic; }",
         "    .formula { color: #334155; font-size: 0.95rem; }",
         "    .plot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin-top: 16px; }",
@@ -1558,6 +1702,7 @@ def build_html_report(analysis_record: dict, base_url: str | None = None) -> str
                 f"      <li>Description: {html.escape(pair_result['icc_result']['description'])}</li>",
                 f"      <li>Complete observations analysed: {pair_result['dataset_summary']['observations']}</li>",
                 f"      <li>Dropped rows due to missing values: {pair_result['dataset_summary']['dropped_rows']}</li>",
+                *[f"      <li>{html.escape(line)}</li>" for line in pair_metric_value_lines(pair_result)],
                 "    </ul>",
                 f"    <p class=\"formula\">Typical error formula: {html.escape(pair_result['typical_error_formula'])}</p>",
                 f"    <p class=\"formula\">Minimum detectable change formula: {html.escape(pair_result['minimum_detectable_change_formula'])}</p>",
@@ -1608,10 +1753,16 @@ def build_html_report(analysis_record: dict, base_url: str | None = None) -> str
     return "\n".join(lines)
 
 
-def build_scatter_plot(dataframe: pd.DataFrame, x_column: str, y_column: str) -> plt.Figure:
+def build_scatter_plot(
+    dataframe: pd.DataFrame,
+    x_column: str,
+    y_column: str,
+    palette_key: str = DEFAULT_FIGURE_PALETTE,
+) -> plt.Figure:
     x_values = dataframe[x_column].to_numpy(dtype=float)
     y_values = dataframe[y_column].to_numpy(dtype=float)
     regression_band = build_regression_confidence_band(x_values, y_values)
+    palette = get_figure_palette(palette_key)
     lower = float(min(x_values.min(), y_values.min()))
     upper = float(max(x_values.max(), y_values.max()))
     padding = max((upper - lower) * 0.05, 0.1)
@@ -1619,13 +1770,13 @@ def build_scatter_plot(dataframe: pd.DataFrame, x_column: str, y_column: str) ->
     axis_max = upper + padding
 
     figure, axis = plt.subplots(figsize=(6, 6))
-    axis.scatter(x_values, y_values, color="#2563eb", edgecolors="white", linewidths=0.8, s=55)
+    axis.scatter(x_values, y_values, color=palette["scatter_points"], edgecolors="white", linewidths=0.8, s=55)
     if regression_band:
         axis.fill_between(
             regression_band["x_grid"],
             regression_band["lower_band"],
             regression_band["upper_band"],
-            color="#0f766e",
+            color=palette["regression_band"],
             alpha=0.16,
             label="95% CI of best-fit line",
             zorder=1,
@@ -1633,7 +1784,7 @@ def build_scatter_plot(dataframe: pd.DataFrame, x_column: str, y_column: str) ->
         axis.plot(
             regression_band["x_grid"],
             regression_band["fit_line"],
-            color="#0f766e",
+            color=palette["regression_line"],
             linewidth=1.8,
             label=(
                 f"Best fit: y = {regression_band['slope']:.3f}x "
@@ -1645,7 +1796,7 @@ def build_scatter_plot(dataframe: pd.DataFrame, x_column: str, y_column: str) ->
         [axis_min, axis_max],
         [axis_min, axis_max],
         linestyle="--",
-        color="#dc2626",
+        color=palette["identity_line"],
         linewidth=1.5,
         label="Identity line (y = x)" if regression_band else None,
     )
@@ -1662,9 +1813,15 @@ def build_scatter_plot(dataframe: pd.DataFrame, x_column: str, y_column: str) ->
     return figure
 
 
-def build_bland_altman_plot(dataframe: pd.DataFrame, x_column: str, y_column: str) -> plt.Figure:
+def build_bland_altman_plot(
+    dataframe: pd.DataFrame,
+    x_column: str,
+    y_column: str,
+    palette_key: str = DEFAULT_FIGURE_PALETTE,
+) -> plt.Figure:
     x_values = dataframe[x_column].to_numpy(dtype=float)
     y_values = dataframe[y_column].to_numpy(dtype=float)
+    palette = get_figure_palette(palette_key)
     means = (x_values + y_values) / 2
     differences = y_values - x_values
     bias = float(np.mean(differences))
@@ -1675,11 +1832,11 @@ def build_bland_altman_plot(dataframe: pd.DataFrame, x_column: str, y_column: st
     y_limit = max_extent * 1.1
 
     figure, axis = plt.subplots(figsize=(7, 5.5))
-    axis.scatter(means, differences, color="#0f766e", edgecolors="white", linewidths=0.8, s=55)
-    axis.axhline(0, color="#1e293b", linewidth=1.1)
-    axis.axhline(bias, color="#2563eb", linestyle="-", linewidth=1.6, label=f"Bias = {bias:.3f}")
-    axis.axhline(loa_upper, color="#dc2626", linestyle="--", linewidth=1.4, label=f"Upper LoA = {loa_upper:.3f}")
-    axis.axhline(loa_lower, color="#dc2626", linestyle="--", linewidth=1.4, label=f"Lower LoA = {loa_lower:.3f}")
+    axis.scatter(means, differences, color=palette["bland_points"], edgecolors="white", linewidths=0.8, s=55)
+    axis.axhline(0, color=palette["zero_line"], linewidth=1.1)
+    axis.axhline(bias, color=palette["bias_line"], linestyle="-", linewidth=1.6, label=f"Bias = {bias:.3f}")
+    axis.axhline(loa_upper, color=palette["loa_line"], linestyle="--", linewidth=1.4, label=f"Upper LoA = {loa_upper:.3f}")
+    axis.axhline(loa_lower, color=palette["loa_line"], linestyle="--", linewidth=1.4, label=f"Lower LoA = {loa_lower:.3f}")
     axis.set_ylim(-y_limit, y_limit)
     axis.set_xlabel(f"Mean of {x_column} and {y_column}")
     axis.set_ylabel(f"Difference ({y_column} - {x_column})")
@@ -1707,11 +1864,12 @@ def build_plot_response(analysis_record: dict, pair_key: str, plot_kind: str, fi
     x_column = pair_result["primary_x_column"]
     y_column = pair_result["primary_y_column"]
     wide_frame = pair_frame[[x_column, y_column]].copy()
+    figure_palette = config.get("figure_palette", DEFAULT_FIGURE_PALETTE)
 
     if plot_kind == "scatter":
-        figure = build_scatter_plot(wide_frame, x_column, y_column)
+        figure = build_scatter_plot(wide_frame, x_column, y_column, figure_palette)
     elif plot_kind == "bland-altman":
-        figure = build_bland_altman_plot(wide_frame, x_column, y_column)
+        figure = build_bland_altman_plot(wide_frame, x_column, y_column, figure_palette)
     else:
         abort(404)
 
@@ -1745,6 +1903,7 @@ def default_form_state(sheet_meta: dict | None, analysis_record: dict | None = N
         "study_design": "two_way_random",
         "agreement_definition": "absolute",
         "measurement_unit": "single",
+        "figure_palette": DEFAULT_FIGURE_PALETTE,
         "figure_action": "both",
         "sheet_name": sheet_meta["name"] if sheet_meta else "",
         "available_columns": all_columns,
@@ -1764,6 +1923,7 @@ def default_form_state(sheet_meta: dict | None, analysis_record: dict | None = N
                 "study_design": config.get("study_design", "two_way_random"),
                 "agreement_definition": config.get("agreement_definition", "absolute"),
                 "measurement_unit": config.get("measurement_unit", "single"),
+                "figure_palette": config.get("figure_palette", DEFAULT_FIGURE_PALETTE),
                 "figure_action": config.get("figure_action", "both"),
                 "sheet_name": config.get("selected_sheet", form_state["sheet_name"]),
             }
@@ -1800,6 +1960,7 @@ def form_state_from_request(sheet_meta: dict) -> dict:
         "study_design": request.form.get("study_design", "two_way_random"),
         "agreement_definition": request.form.get("agreement_definition", "absolute"),
         "measurement_unit": request.form.get("measurement_unit", "single"),
+        "figure_palette": request.form.get("figure_palette", DEFAULT_FIGURE_PALETTE),
         "figure_action": request.form.get("figure_action", "both"),
         "sheet_name": request.form.get("sheet_name", sheet_meta["name"]),
         "available_columns": sheet_meta["columns"],
@@ -1851,6 +2012,7 @@ def index() -> str:
                         study_design=form_state["study_design"],
                         agreement_definition=form_state["agreement_definition"],
                         measurement_unit=form_state["measurement_unit"],
+                        figure_palette=form_state["figure_palette"],
                         figure_action=form_state["figure_action"],
                     )
                     analysis_id = save_analysis_record(analysis_result)
@@ -1875,6 +2037,7 @@ def index() -> str:
                         preview_columns=list(preview_frame.columns),
                         preview_rows=build_preview_rows(preview_frame),
                         form_state=form_state,
+                        figure_palette_options=figure_palette_options(),
                         analysis=None,
                     )
 
@@ -1912,6 +2075,7 @@ def index() -> str:
         preview_columns=preview_columns,
         preview_rows=preview_rows,
         form_state=form_state,
+        figure_palette_options=figure_palette_options(),
         analysis=analysis_record,
         show_export_prompt=show_export_prompt,
     )
@@ -1934,6 +2098,25 @@ def plot_file(analysis_id: str, pair_key: str, plot_kind: str, file_format: str)
         abort(404)
     download = request.args.get("download") == "1"
     return build_plot_response(analysis_record, pair_key, plot_kind, file_format, download)
+
+
+@app.get("/palette-preview/<plot_kind>.svg")
+def palette_preview(plot_kind: str):
+    palette_key = request.args.get("palette", DEFAULT_FIGURE_PALETTE)
+    preview_frame = build_palette_preview_frame()
+
+    if plot_kind == "scatter":
+        figure = build_scatter_plot(preview_frame, "Test 1", "Test 2", palette_key)
+    elif plot_kind == "bland-altman":
+        figure = build_bland_altman_plot(preview_frame, "Test 1", "Test 2", palette_key)
+    else:
+        abort(404)
+
+    buffer = io.BytesIO()
+    figure.savefig(buffer, format="svg", bbox_inches="tight")
+    plt.close(figure)
+    buffer.seek(0)
+    return send_file(buffer, mimetype="image/svg+xml")
 
 
 @app.get("/reports/<analysis_id>.md")
