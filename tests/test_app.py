@@ -13,6 +13,7 @@ from app import (
     build_bland_altman_plot,
     build_html_report,
     build_markdown_report,
+    format_fixed_decimal,
     build_regression_confidence_band,
     build_scatter_plot,
     build_typical_error_table,
@@ -41,9 +42,14 @@ class ReliabilityAppTests(unittest.TestCase):
         self.assertEqual(pairs[1]["test_2"], "Knee Flexion Test 2")
 
     def test_extract_ci_bounds_handles_string_and_sequence_inputs(self) -> None:
-        self.assertEqual(extract_ci_bounds("[0.12, 0.98]"), (0.12, 0.98))
-        self.assertEqual(extract_ci_bounds((0.33, 0.77)), (0.33, 0.77))
+        self.assertEqual(extract_ci_bounds("[0.1234, 0.9876]"), (0.123, 0.988))
+        self.assertEqual(extract_ci_bounds((0.3333, 0.7777)), (0.333, 0.778))
         self.assertEqual(extract_ci_bounds("invalid"), (None, None))
+
+    def test_format_fixed_decimal_preserves_trailing_zeros(self) -> None:
+        self.assertEqual(format_fixed_decimal(0.8), "0.800")
+        self.assertEqual(format_fixed_decimal(1.0), "1.000")
+        self.assertEqual(format_fixed_decimal(None), "—")
 
     def test_regression_confidence_band_requires_non_constant_x(self) -> None:
         x_values = np.array([5.0, 5.0, 5.0])

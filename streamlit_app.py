@@ -94,10 +94,10 @@ def render_pair_section(upload_record: dict, analysis_record: dict, pair_result:
     st.subheader(pair_result["pair_label"])
     figure_palette = analysis_record["config"].get("figure_palette", DEFAULT_FIGURE_PALETTE)
     metric_columns = st.columns(6)
-    metric_columns[0].metric("ICC", str(pair_result["icc_result"]["estimate"]))
+    metric_columns[0].metric("ICC", pair_result["icc_result"]["estimate_display"])
     metric_columns[1].metric(
         "95% CI",
-        f"{pair_result['icc_result']['ci_lower']} to {pair_result['icc_result']['ci_upper']}",
+        f"{pair_result['icc_result']['ci_lower_display']} to {pair_result['icc_result']['ci_upper_display']}",
     )
     metric_columns[2].metric("Observations", str(pair_result["dataset_summary"]["observations"]))
     metric_columns[3].metric("Dropped rows", str(pair_result["dataset_summary"]["dropped_rows"]))
@@ -211,6 +211,10 @@ def main() -> None:
         "Figure color palette",
         options=palette_labels,
         index=palette_labels.index(default_palette_label),
+        help=(
+            "Pick the colour style used for the scatter plot and Bland-Altman plot. "
+            "This changes the look of the figures only and does not change the analysis results."
+        ),
     )
     selected_palette_key = palette_keys_by_label[selected_palette_label]
     st.session_state["figure_palette"] = selected_palette_key
@@ -229,18 +233,31 @@ def main() -> None:
         subject_column = st.selectbox(
             "Observation ID column",
             options=subject_options,
+            help=(
+                "Choose the column that identifies each person, item, or case. "
+                "This helps the app keep each row matched correctly across repeated measurements. "
+                "If your file does not have an ID column, use generated row labels."
+            ),
             format_func=lambda value: "Use generated row labels" if value == "" else value,
         )
         selected_pair_keys = st.multiselect(
             "Detected reliability pairs",
             options=list(pair_lookup.keys()),
             default=list(pair_lookup.keys())[:1],
+            help=(
+                "These are suggested Test 1 / Test 2 style column pairs that appear to belong together. "
+                "Select the ones you want to analyse. If the suggestions are not right, leave them unselected and use the manual X and Y choices instead."
+            ),
             format_func=lambda key: pair_lookup[key],
         )
         measurement_columns = st.multiselect(
             "Measurement columns",
             options=numeric_columns,
             default=default_measurements,
+            help=(
+                "Select the numeric columns that contain the actual scores or measurements you want to compare. "
+                "These are usually values from raters, devices, sessions, or test occasions, not names or text labels."
+            ),
         )
 
         plot_column_1, plot_column_2 = st.columns(2)
@@ -249,6 +266,10 @@ def main() -> None:
                 "Primary plot X column",
                 options=numeric_columns,
                 index=numeric_columns.index(default_measurements[0]) if default_measurements else 0,
+                help=(
+                    "Choose the measurement column to place on the horizontal axis of the scatter plot. "
+                    "This is usually the first test, first rater, or reference measurement you want to compare."
+                ),
             )
         with plot_column_2:
             default_y_index = 1 if len(default_measurements) > 1 else min(1, len(numeric_columns) - 1)
@@ -256,15 +277,47 @@ def main() -> None:
                 "Primary plot Y column",
                 options=numeric_columns,
                 index=numeric_columns.index(default_measurements[1]) if len(default_measurements) > 1 else default_y_index,
+                help=(
+                    "Choose the measurement column to place on the vertical axis of the scatter plot. "
+                    "This is usually the second test, second rater, or comparison measurement matched against the X column."
+                ),
             )
 
         setting_column_1, setting_column_2, setting_column_3 = st.columns(3)
         with setting_column_1:
-            study_design_label = st.selectbox("Study design", options=list(STUDY_DESIGN_OPTIONS.keys()), index=1)
+            study_design_label = st.selectbox(
+                "Study design",
+                options=list(STUDY_DESIGN_OPTIONS.keys()),
+                index=1,
+                help=(
+                    "Choose how the repeated measurements were collected. "
+                    "Use one-way random when different people, devices, or occasions may have measured different subjects. "
+                    "Use two-way random when the same people, devices, or occasions measured everyone and you want the result to apply more broadly. "
+                    "Use two-way mixed when the same specific people or devices measured everyone and you only care about those exact measurers."
+                ),
+            )
         with setting_column_2:
-            agreement_label = st.selectbox("Agreement target", options=list(AGREEMENT_OPTIONS.keys()), index=0)
+            agreement_label = st.selectbox(
+                "Agreement target",
+                options=list(AGREEMENT_OPTIONS.keys()),
+                index=0,
+                help=(
+                    "Choose what kind of matching you want between repeated measurements. "
+                    "Use absolute agreement when repeated measurements should be close to the same actual value. "
+                    "Use consistency when repeated measurements can differ a little in level, but should still rank people in a similar order."
+                ),
+            )
         with setting_column_3:
-            measurement_label = st.selectbox("Measurement unit", options=list(MEASUREMENT_OPTIONS.keys()), index=0)
+            measurement_label = st.selectbox(
+                "Measurement unit",
+                options=list(MEASUREMENT_OPTIONS.keys()),
+                index=0,
+                help=(
+                    "Choose whether you want reliability for one measurement or for an average. "
+                    "Use single measurement when decisions will be based on one test, one rater, or one occasion at a time. "
+                    "Use average measurement when the final score will be the average of multiple tests, raters, or occasions."
+                ),
+            )
 
         submitted = st.form_submit_button("Run reliability analysis")
 

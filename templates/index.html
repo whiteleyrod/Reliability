@@ -196,7 +196,14 @@
             </label>
 
             <label>
-              <span>Observation ID column</span>
+              <span class="field-label">Observation ID column
+                <span class="tooltip" tabindex="0" aria-label="Observation ID column help">
+                  <span class="tooltip-trigger">?</span>
+                  <span class="tooltip-content">
+                    Choose the column that names each person, item, or case in your dataset. This helps the app keep repeated measurements grouped to the correct row. If your file does not have a clear ID column, you can leave this as generated row labels.
+                  </span>
+                </span>
+              </span>
               <select name="subject_column">
                 <option value="" {% if not form_state.subject_column %}selected{% endif %}>Use generated row labels</option>
                 {% for column in form_state.available_columns %}
@@ -207,7 +214,14 @@
           </div>
 
           <fieldset>
-            <legend>Detected reliability pairs</legend>
+            <legend class="field-label">Detected reliability pairs
+              <span class="tooltip" tabindex="0" aria-label="Detected reliability pairs help">
+                <span class="tooltip-trigger">?</span>
+                <span class="tooltip-content">
+                  These are column pairs the app thinks belong together, such as Test 1 and Test 2 for the same measure. Select the pairs you want to analyse. If the suggestions do not look right, you can leave them unchecked and use the manual X and Y column choices below.
+                </span>
+              </span>
+            </legend>
             {% if form_state.detected_pairs %}
             <div class="pair-grid">
               {% for pair in form_state.detected_pairs %}
@@ -225,7 +239,14 @@
           </fieldset>
 
           <fieldset>
-            <legend>Select measurement columns</legend>
+            <legend class="field-label">Select measurement columns
+              <span class="tooltip" tabindex="0" aria-label="Measurement columns help">
+                <span class="tooltip-trigger">?</span>
+                <span class="tooltip-content">
+                  Tick the numeric columns that contain the scores or measurements you want to compare. In most cases, these are the results from different raters, devices, sessions, or test occasions. Leave out ID columns, notes, or other descriptive text columns.
+                </span>
+              </span>
+            </legend>
             <div class="checkbox-grid">
               {% for column in form_state.numeric_columns %}
               <label class="check-card">
@@ -238,7 +259,14 @@
 
           <div class="field-grid">
             <label>
-              <span>Primary plot X column</span>
+              <span class="field-label">Primary plot X column
+                <span class="tooltip" tabindex="0" aria-label="Primary plot X column help">
+                  <span class="tooltip-trigger">?</span>
+                  <span class="tooltip-content">
+                    Choose the measurement column you want to place on the horizontal axis of the scatter plot. This is usually the first test, first rater, or reference measurement you want to compare.
+                  </span>
+                </span>
+              </span>
               <select name="primary_x_column">
                 {% for column in form_state.numeric_columns %}
                 <option value="{{ column }}" {% if column == form_state.primary_x_column %}selected{% endif %}>{{ column }}</option>
@@ -247,7 +275,14 @@
             </label>
 
             <label>
-              <span>Primary plot Y column</span>
+              <span class="field-label">Primary plot Y column
+                <span class="tooltip" tabindex="0" aria-label="Primary plot Y column help">
+                  <span class="tooltip-trigger">?</span>
+                  <span class="tooltip-content">
+                    Choose the measurement column you want to place on the vertical axis of the scatter plot. This is usually the second test, second rater, or comparison measurement matched against the X column.
+                  </span>
+                </span>
+              </span>
               <select name="primary_y_column">
                 {% for column in form_state.numeric_columns %}
                 <option value="{{ column }}" {% if column == form_state.primary_y_column %}selected{% endif %}>{{ column }}</option>
@@ -262,9 +297,10 @@
                 <span class="tooltip" tabindex="0" aria-label="Study design help">
                   <span class="tooltip-trigger">?</span>
                   <span class="tooltip-content">
-                    <strong>One-way random</strong>: use when each subject may be rated by a different random set of raters or occasions.<br />
-                    <strong>Two-way random</strong>: use when the same raters or occasions score every subject and you want to generalise beyond those raters.<br />
-                    <strong>Two-way mixed</strong>: use when the same fixed raters or devices score every subject and you only care about those exact raters.
+                    Choose how the repeated measurements were collected.<br />
+                    <strong>One-way random</strong>: use when different people, devices, or occasions may have measured different subjects.<br />
+                    <strong>Two-way random</strong>: use when the same people, devices, or occasions measured everyone and you want the result to apply more broadly.<br />
+                    <strong>Two-way mixed</strong>: use when the same specific people or devices measured everyone and you only care about those exact measurers.
                   </span>
                 </span>
               </span>
@@ -280,8 +316,9 @@
                 <span class="tooltip" tabindex="0" aria-label="Agreement target help">
                   <span class="tooltip-trigger">?</span>
                   <span class="tooltip-content">
-                    <strong>Absolute agreement</strong>: use when raters should give nearly the same numeric value, so both shifts and rank-order differences matter.<br />
-                    <strong>Consistency</strong>: use when you mainly care whether raters rank subjects similarly, even if one rater is systematically higher or lower.
+                    Choose what kind of matching you want between repeated measurements.<br />
+                    <strong>Absolute agreement</strong>: use when repeated measurements should be close to the same actual value.<br />
+                    <strong>Consistency</strong>: use when repeated measurements can differ a little in level, but should still rank people in a similar order.
                   </span>
                 </span>
               </span>
@@ -296,8 +333,9 @@
                 <span class="tooltip" tabindex="0" aria-label="Measurement unit help">
                   <span class="tooltip-trigger">?</span>
                   <span class="tooltip-content">
-                    <strong>Single measurement</strong>: use when decisions will be based on one rater, one trial, or one occasion at a time.<br />
-                    <strong>Average measurement</strong>: use when the final score will be the average of multiple raters, trials, or occasions.
+                    Choose whether you want reliability for one measurement or for an average.<br />
+                    <strong>Single measurement</strong>: use when decisions will be based on one test, one rater, or one occasion at a time.<br />
+                    <strong>Average measurement</strong>: use when the final score will be the average of multiple tests, raters, or occasions.
                   </span>
                 </span>
               </span>
@@ -309,10 +347,24 @@
           </div>
 
           <fieldset>
-            <legend>Figure color palette</legend>
+            <legend class="field-label">Figure color palette
+              <span class="tooltip" tabindex="0" aria-label="Figure color palette help">
+                <span class="tooltip-trigger">?</span>
+                <span class="tooltip-content">
+                  Pick the color style used for the scatter plot and Bland-Altman plot. This changes the appearance of the figures only and does not affect the analysis results.
+                </span>
+              </span>
+            </legend>
             <div class="field-grid palette-field-grid">
               <label>
-                <span>Preset palette</span>
+                <span class="field-label">Preset palette
+                  <span class="tooltip" tabindex="0" aria-label="Preset palette help">
+                    <span class="tooltip-trigger">?</span>
+                    <span class="tooltip-content">
+                      Select a preset colour combination for your figures. Use the previews to see how the scatter plot and Bland-Altman plot will look before you run the analysis.
+                    </span>
+                  </span>
+                </span>
                 <select name="figure_palette" id="figure-palette-select">
                   {% for palette in figure_palette_options %}
                   <option value="{{ palette.key }}" {% if palette.key == form_state.figure_palette %}selected{% endif %}>{{ palette.label }}</option>
@@ -451,8 +503,8 @@
                 {% for pair in analysis.pair_results %}
                 <tr>
                   <td><a class="table-link" href="#pair-{{ pair.pair_key }}">{{ pair.pair_label }}</a></td>
-                  <td>{{ pair.icc_result.estimate }}</td>
-                  <td>{{ pair.icc_result.ci_lower }} to {{ pair.icc_result.ci_upper }}</td>
+                  <td>{{ pair.icc_result.estimate_display }}</td>
+                  <td>{{ pair.icc_result.ci_lower_display }} to {{ pair.icc_result.ci_upper_display }}</td>
                   <td>{{ pair.dataset_summary.observations }}</td>
                   <td>{{ pair.dataset_summary.dropped_rows }}</td>
                   <td>{{ pair.pair_metrics[0].typical_error if pair.pair_metrics else '—' }}</td>
@@ -478,8 +530,8 @@
         <div class="stats-grid compact">
           <article class="stat-card">
             <span>ICC estimate</span>
-            <strong>{{ pair.icc_result.estimate }}</strong>
-            <small>95% CI {{ pair.icc_result.ci_lower }} to {{ pair.icc_result.ci_upper }}</small>
+            <strong>{{ pair.icc_result.estimate_display }}</strong>
+            <small>95% CI {{ pair.icc_result.ci_lower_display }} to {{ pair.icc_result.ci_upper_display }}</small>
           </article>
           <article class="stat-card">
             <span>Observations</span>

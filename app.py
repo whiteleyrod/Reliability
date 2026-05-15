@@ -377,6 +377,22 @@ def to_float(value: object, digits: int = 4) -> float | None:
     return round(float(value), digits)
 
 
+def format_fixed_decimal(value: object, digits: int = 3) -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{float(value):.{digits}f}"
+
+
+def icc_estimate_display(icc_result: dict) -> str:
+    return str(icc_result.get("estimate_display") or format_fixed_decimal(icc_result.get("estimate"), digits=3))
+
+
+def icc_ci_display(icc_result: dict) -> str:
+    lower = icc_result.get("ci_lower_display") or format_fixed_decimal(icc_result.get("ci_lower"), digits=3)
+    upper = icc_result.get("ci_upper_display") or format_fixed_decimal(icc_result.get("ci_upper"), digits=3)
+    return f"{lower} to {upper}"
+
+
 def summarise_series(series: pd.Series) -> dict:
     cleaned = pd.to_numeric(series, errors="coerce").dropna()
 
@@ -589,11 +605,11 @@ def extract_ci_bounds(ci_value: object) -> tuple[float | None, float | None]:
         stripped = ci_value.strip("[]()")
         parts = [part.strip() for part in re.split(r"[,;\s]+", stripped) if part.strip()]
         if len(parts) == 2:
-            return to_float(float(parts[0])), to_float(float(parts[1]))
+            return to_float(float(parts[0]), digits=3), to_float(float(parts[1]), digits=3)
         return None, None
 
     if isinstance(ci_value, (list, tuple, np.ndarray, pd.Series)) and len(ci_value) >= 2:
-        return to_float(ci_value[0]), to_float(ci_value[1])
+        return to_float(ci_value[0], digits=3), to_float(ci_value[1], digits=3)
 
     return None, None
 
@@ -763,8 +779,11 @@ def analyse_pair_result(
         "icc_result": {
             "model": recommendation["icc_code"],
             "estimate": to_float(selected_row["ICC"]),
+            "estimate_display": format_fixed_decimal(selected_row["ICC"], digits=3),
             "ci_lower": ci_lower,
             "ci_upper": ci_upper,
+            "ci_lower_display": format_fixed_decimal(ci_lower, digits=3),
+            "ci_upper_display": format_fixed_decimal(ci_upper, digits=3),
             "f_value": to_float(selected_row.get("F")),
             "p_value": to_float(selected_row.get("pval")),
             "description": str(selected_row.get("Description", "")),
@@ -1271,8 +1290,8 @@ def build_pdf_report(analysis_record: dict) -> bytes:
                 Paragraph(f"3.{index} Results for {pair_result['pair_label']}", styles["Heading1"]),
                 Paragraph(f"Columns: {pair_result['primary_x_column']} vs {pair_result['primary_y_column']}", styles["Normal"]),
                 Paragraph(f"ICC model: {pair_result['icc_result']['model']}", styles["Normal"]),
-                Paragraph(f"ICC estimate: {pair_result['icc_result']['estimate']}", styles["Normal"]),
-                Paragraph(f"95% CI: {pair_result['icc_result']['ci_lower']} to {pair_result['icc_result']['ci_upper']}", styles["Normal"]),
+                Paragraph(f"ICC estimate: {icc_estimate_display(pair_result['icc_result'])}", styles["Normal"]),
+                Paragraph(f"95% CI: {icc_ci_display(pair_result['icc_result'])}", styles["Normal"]),
                 Paragraph(f"F value: {pair_result['icc_result']['f_value']}", styles["Normal"]),
                 Paragraph(f"P value: {pair_result['icc_result']['p_value']}", styles["Normal"]),
                 Paragraph(f"Description: {pair_result['icc_result']['description']}", styles["Normal"]),
@@ -1377,8 +1396,8 @@ def build_docx_report(analysis_record: dict) -> bytes:
         document.add_heading(f"3.{index} Results for {pair_result['pair_label']}", level=1)
         document.add_paragraph(f"Columns: {pair_result['primary_x_column']} vs {pair_result['primary_y_column']}")
         document.add_paragraph(f"ICC model: {pair_result['icc_result']['model']}")
-        document.add_paragraph(f"ICC estimate: {pair_result['icc_result']['estimate']}")
-        document.add_paragraph(f"95% CI: {pair_result['icc_result']['ci_lower']} to {pair_result['icc_result']['ci_upper']}")
+        document.add_paragraph(f"ICC estimate: {icc_estimate_display(pair_result['icc_result'])}")
+        document.add_paragraph(f"95% CI: {icc_ci_display(pair_result['icc_result'])}")
         document.add_paragraph(f"F value: {pair_result['icc_result']['f_value']}")
         document.add_paragraph(f"P value: {pair_result['icc_result']['p_value']}")
         document.add_paragraph(f"Description: {pair_result['icc_result']['description']}")
@@ -1531,8 +1550,8 @@ def build_markdown_report(analysis_record: dict, base_url: str | None = None) ->
                 "",
                 f"- Columns: {pair_result['primary_x_column']} vs {pair_result['primary_y_column']}",
                 f"- ICC model: {pair_result['icc_result']['model']}",
-                f"- ICC estimate: {pair_result['icc_result']['estimate']}",
-                f"- 95% CI: {pair_result['icc_result']['ci_lower']} to {pair_result['icc_result']['ci_upper']}",
+                f"- ICC estimate: {icc_estimate_display(pair_result['icc_result'])}",
+                f"- 95% CI: {icc_ci_display(pair_result['icc_result'])}",
                 f"- F value: {pair_result['icc_result']['f_value']}",
                 f"- P value: {pair_result['icc_result']['p_value']}",
                 f"- Description: {pair_result['icc_result']['description']}",
@@ -1695,8 +1714,8 @@ def build_html_report(analysis_record: dict, base_url: str | None = None) -> str
                 "    <ul class=\"meta-list\">",
                 f"      <li>Columns: {html.escape(pair_result['primary_x_column'])} vs {html.escape(pair_result['primary_y_column'])}</li>",
                 f"      <li>ICC model: {html.escape(pair_result['icc_result']['model'])}</li>",
-                f"      <li>ICC estimate: {pair_result['icc_result']['estimate']}</li>",
-                f"      <li>95% CI: {pair_result['icc_result']['ci_lower']} to {pair_result['icc_result']['ci_upper']}</li>",
+                f"      <li>ICC estimate: {icc_estimate_display(pair_result['icc_result'])}</li>",
+                f"      <li>95% CI: {icc_ci_display(pair_result['icc_result'])}</li>",
                 f"      <li>F value: {pair_result['icc_result']['f_value']}</li>",
                 f"      <li>P value: {pair_result['icc_result']['p_value']}</li>",
                 f"      <li>Description: {html.escape(pair_result['icc_result']['description'])}</li>",
