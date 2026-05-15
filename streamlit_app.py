@@ -14,6 +14,7 @@ from app import (
     analyse_wide_dataset,
     build_bland_altman_plot,
     build_docx_report,
+    build_html_report,
     build_pdf_report,
     build_scatter_plot,
     build_source_data_export_frame,
@@ -88,7 +89,7 @@ def default_measurement_columns(sheet_meta: dict) -> list[str]:
 
 def render_pair_section(upload_record: dict, analysis_record: dict, pair_result: dict) -> None:
     st.subheader(pair_result["pair_label"])
-    metric_columns = st.columns(5)
+    metric_columns = st.columns(6)
     metric_columns[0].metric("ICC", str(pair_result["icc_result"]["estimate"]))
     metric_columns[1].metric(
         "95% CI",
@@ -100,17 +101,26 @@ def render_pair_section(upload_record: dict, analysis_record: dict, pair_result:
         "Typical error",
         str(pair_result["pair_metrics"][0]["typical_error"] if pair_result["pair_metrics"] else "—"),
     )
+    metric_columns[5].metric(
+        "MDC 95%",
+        str(
+            pair_result["pair_metrics"][0]["minimum_detectable_change_95"]
+            if pair_result["pair_metrics"]
+            else "—"
+        ),
+    )
 
     st.caption(pair_result["typical_error_formula"])
+    st.caption(pair_result["minimum_detectable_change_formula"])
 
-    st.markdown("**Series summaries**")
-    st.dataframe(pd.DataFrame(pair_result["column_summaries"]), use_container_width=True)
+    with st.expander("Series summaries", expanded=False):
+        st.dataframe(pd.DataFrame(pair_result["column_summaries"]), use_container_width=True)
 
-    st.markdown("**Observation summaries**")
-    st.dataframe(pd.DataFrame(pair_result["observation_summaries"]), use_container_width=True)
+    with st.expander("Observation summaries", expanded=False):
+        st.dataframe(pd.DataFrame(pair_result["observation_summaries"]), use_container_width=True)
 
-    st.markdown("**Typical error and limits of agreement**")
-    st.dataframe(pd.DataFrame(pair_result["pair_metrics"]), use_container_width=True)
+    with st.expander("Typical error, minimum detectable change, and limits of agreement", expanded=True):
+        st.dataframe(pd.DataFrame(pair_result["pair_metrics"]), use_container_width=True)
 
     pair_source_frame = build_source_data_frame(upload_record, analysis_record, pair_result)
     pair_frame = pair_source_frame[[pair_result["primary_x_column"], pair_result["primary_y_column"]]].copy()
@@ -146,7 +156,7 @@ def render_pair_section(upload_record: dict, analysis_record: dict, pair_result:
             key=f"bland-{pair_result['pair_key']}",
         )
 
-    with st.expander("Source data used for this pair"):
+    with st.expander("Source data used for this pair", expanded=False):
         st.dataframe(pair_source_frame, use_container_width=True)
 
 
@@ -173,7 +183,7 @@ def main() -> None:
     sheet_meta = get_sheet_meta(upload_record, selected_sheet)
     preview_frame = read_dataset(UPLOAD_DIR / upload_record["stored_filename"], upload_record["file_type"], selected_sheet)
 
-    with st.expander("Preview data", expanded=True):
+    with st.expander("Preview data", expanded=False):
         st.dataframe(preview_frame.head(12), use_container_width=True)
 
     numeric_columns = sheet_meta.get("numeric_columns", [])
@@ -256,10 +266,11 @@ def main() -> None:
     st.success(analysis_record["recommendation"]["rationale"])
 
     source_csv = build_source_data_export_frame(upload_record, analysis_record).to_csv(index=False).encode("utf-8")
+    html_bytes = build_html_report(analysis_record).encode("utf-8")
     pdf_bytes = build_pdf_report(analysis_record)
     docx_bytes = build_docx_report(analysis_record)
 
-    download_column_1, download_column_2, download_column_3 = st.columns(3)
+    download_column_1, download_column_2, download_column_3, download_column_4 = st.columns(4)
     download_column_1.download_button(
         "Download analysed source data (CSV)",
         data=source_csv,
@@ -277,6 +288,12 @@ def main() -> None:
         data=docx_bytes,
         file_name="reliability-results.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    download_column_4.download_button(
+        "Download results report (HTML)",
+        data=html_bytes,
+        file_name="reliability-results.html",
+        mime="text/html",
     )
 
     for pair_result in analysis_record["pair_results"]:

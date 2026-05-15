@@ -13,10 +13,11 @@ Current build includes:
 - 95% confidence intervals
 - descriptive summaries for the full analysed group
 - per-observation summaries
-- typical error, bias, and limits of agreement
+- typical error, minimum detectable change (95%), bias, and limits of agreement
 - square scatter plots with a `y = x` reference line plus shaded 95% confidence intervals around the line of best fit
 - Bland-Altman plots centered symmetrically around 0 on the y-axis
 - SVG preview and SVG/PDF download routes
+- single HTML report export with analysed data first, analysis description, package list, commands used, results, and figures
 - single PDF report export with analysed data first, analysis description, package list, commands used, results, and figures
 - DOCX report export with figures embedded as SVG image parts plus Word-compatible PNG fallbacks
 - CSV export of the analysed source data used in each reliability analysis
@@ -74,7 +75,8 @@ Then open http://127.0.0.1:8000
 6. Review the selected columns and primary pair settings.
 7. Confirm the ICC design settings and figure action.
 8. Run the analysis.
-9. Choose whether to keep viewing results in the browser or download a PDF or DOCX report.
+9. Choose whether to keep viewing results in the browser or download an HTML, PDF, or DOCX report.
+10. Expand or collapse the data tables to focus on the sections you need.
 
 ## Installed packages
 
@@ -116,6 +118,8 @@ Notes:
 - `pandas` is pinned to `2.3.3` here because current Streamlit releases require `pandas < 3`
 - a separate repository is not required initially; a dedicated branch is the simplest trial path
 - if the Flask and Streamlit versions diverge substantially over time, splitting them into separate repositories may become cleaner later
+- minimum detectable change is reported as `Typical error × 1.96 × √2`, with typical error defined as `SD(differences) / √2`
+- report downloads now include HTML as well as PDF and DOCX
 
 ## Build a Windows standalone app
 

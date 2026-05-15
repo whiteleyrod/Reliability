@@ -430,6 +430,39 @@ fieldset {
   overflow-x: auto;
 }
 
+.table-panel {
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.table-panel summary {
+  cursor: pointer;
+  padding: 0.95rem 1rem;
+  color: #bfdbfe;
+  font-weight: 700;
+  list-style: none;
+}
+
+.table-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.table-panel summary::before {
+  content: "+";
+  display: inline-block;
+  width: 1rem;
+  margin-right: 0.45rem;
+}
+
+.table-panel[open] summary::before {
+  content: "−";
+}
+
+.table-panel .table-wrap {
+  padding: 0 1rem 1rem;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

@@ -144,26 +144,29 @@
         </div>
 
         {% if preview_columns %}
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                {% for column in preview_columns %}
-                <th>{{ column }}</th>
-                {% endfor %}
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in preview_rows %}
-              <tr>
-                {% for column in preview_columns %}
-                <td>{{ row[column] if row[column] is not none else "" }}</td>
-                {% endfor %}
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
+          <details class="table-panel" open>
+            <summary>Expand or collapse preview data</summary>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    {% for column in preview_columns %}
+                    <th>{{ column }}</th>
+                    {% endfor %}
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in preview_rows %}
+                  <tr>
+                    {% for column in preview_columns %}
+                    <td>{{ row[column] if row[column] is not none else "" }}</td>
+                    {% endfor %}
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </details>
         {% else %}
         <p class="subtle">No preview is available for the selected worksheet.</p>
         {% endif %}
@@ -328,12 +331,13 @@
             <p class="eyebrow">Results ready</p>
             <h2>Choose what to do next</h2>
           </div>
-          <p class="subtle">You can stay in the browser and inspect the results below, or download a PDF or DOCX report containing the analysed data, methods, results, and figures.</p>
+          <p class="subtle">You can stay in the browser and inspect the results below, or download an HTML, PDF, or DOCX report containing the analysed data, methods, results, and figures.</p>
         </div>
         <div class="download-actions">
           <a class="download-link secondary" href="{{ url_for('index', upload_id=upload.id if upload else None, sheet=selected_sheet, analysis_id=analysis.id) }}#results">View results here</a>
           <a class="download-link" href="{{ url_for('pdf_report', analysis_id=analysis.id) }}">Download results PDF</a>
           <a class="download-link secondary" href="{{ url_for('docx_report', analysis_id=analysis.id) }}">Download results DOCX</a>
+          <a class="download-link secondary" href="{{ url_for('html_report', analysis_id=analysis.id) }}">Download results HTML</a>
         </div>
       </section>
       {% endif %}
@@ -347,6 +351,7 @@
           <div class="actions-stack">
             <p class="subtle">{{ analysis.recommendation.rationale }}</p>
             <div class="download-actions">
+              <a class="download-link secondary" href="{{ url_for('html_report', analysis_id=analysis.id) }}">Download full results report (HTML)</a>
               <a class="download-link" href="{{ url_for('pdf_report', analysis_id=analysis.id) }}">Download full results report (PDF)</a>
               <a class="download-link secondary" href="{{ url_for('docx_report', analysis_id=analysis.id) }}">Download full results report (DOCX)</a>
               <a class="download-link secondary" href="{{ url_for('source_data_csv', analysis_id=analysis.id) }}">Download analysed source data (CSV)</a>
@@ -389,32 +394,37 @@
           </div>
         </div>
 
-        <div class="table-wrap top-gap">
-          <table>
-            <thead>
-              <tr>
-                <th>Selected pair</th>
-                <th>ICC</th>
-                <th>95% CI</th>
-                <th>Observations</th>
-                <th>Dropped rows</th>
-                <th>Typical error</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for pair in analysis.pair_results %}
-              <tr>
-                <td><a class="table-link" href="#pair-{{ pair.pair_key }}">{{ pair.pair_label }}</a></td>
-                <td>{{ pair.icc_result.estimate }}</td>
-                <td>{{ pair.icc_result.ci_lower }} to {{ pair.icc_result.ci_upper }}</td>
-                <td>{{ pair.dataset_summary.observations }}</td>
-                <td>{{ pair.dataset_summary.dropped_rows }}</td>
-                <td>{{ pair.pair_metrics[0].typical_error if pair.pair_metrics else '—' }}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
+        <details class="table-panel top-gap" open>
+          <summary>Expand or collapse pair overview table</summary>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Selected pair</th>
+                  <th>ICC</th>
+                  <th>95% CI</th>
+                  <th>Observations</th>
+                  <th>Dropped rows</th>
+                  <th>Typical error</th>
+                  <th>MDC 95%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for pair in analysis.pair_results %}
+                <tr>
+                  <td><a class="table-link" href="#pair-{{ pair.pair_key }}">{{ pair.pair_label }}</a></td>
+                  <td>{{ pair.icc_result.estimate }}</td>
+                  <td>{{ pair.icc_result.ci_lower }} to {{ pair.icc_result.ci_upper }}</td>
+                  <td>{{ pair.dataset_summary.observations }}</td>
+                  <td>{{ pair.dataset_summary.dropped_rows }}</td>
+                  <td>{{ pair.pair_metrics[0].typical_error if pair.pair_metrics else '—' }}</td>
+                  <td>{{ pair.pair_metrics[0].minimum_detectable_change_95 if pair.pair_metrics else '—' }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </details>
       </section>
 
       {% for pair in analysis.pair_results %}
@@ -453,92 +463,108 @@
             <strong>{{ pair.pair_metrics[0].typical_error if pair.pair_metrics else '—' }}</strong>
             <small>{{ pair.typical_error_formula }}</small>
           </article>
+          <article class="stat-card">
+            <span>Minimum detectable change (95%)</span>
+            <strong>{{ pair.pair_metrics[0].minimum_detectable_change_95 if pair.pair_metrics else '—' }}</strong>
+            <small>{{ pair.minimum_detectable_change_formula }}</small>
+          </article>
         </div>
 
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Series</th>
-                <th>N</th>
-                <th>Mean</th>
-                <th>SD</th>
-                <th>Median</th>
-                <th>IQR</th>
-                <th>Min</th>
-                <th>Max</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in pair.column_summaries %}
-              <tr>
-                <td>{{ row.name }}</td>
-                <td>{{ row.count }}</td>
-                <td>{{ row.mean }}</td>
-                <td>{{ row.sd }}</td>
-                <td>{{ row.median }}</td>
-                <td>{{ row.iqr }}</td>
-                <td>{{ row.min }}</td>
-                <td>{{ row.max }}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
+        <details class="table-panel" open>
+          <summary>Expand or collapse series summaries</summary>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Series</th>
+                  <th>N</th>
+                  <th>Mean</th>
+                  <th>SD</th>
+                  <th>Median</th>
+                  <th>IQR</th>
+                  <th>Min</th>
+                  <th>Max</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in pair.column_summaries %}
+                <tr>
+                  <td>{{ row.name }}</td>
+                  <td>{{ row.count }}</td>
+                  <td>{{ row.mean }}</td>
+                  <td>{{ row.sd }}</td>
+                  <td>{{ row.median }}</td>
+                  <td>{{ row.iqr }}</td>
+                  <td>{{ row.min }}</td>
+                  <td>{{ row.max }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </details>
 
-        <div class="table-wrap top-gap">
-          <table>
-            <thead>
-              <tr>
-                <th>Observation</th>
-                <th>Mean</th>
-                <th>SD</th>
-                <th>Median</th>
-                <th>IQR</th>
-                <th>Min</th>
-                <th>Max</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in pair.observation_summaries %}
-              <tr>
-                <td>{{ row.observation }}</td>
-                <td>{{ row.mean }}</td>
-                <td>{{ row.sd }}</td>
-                <td>{{ row.median }}</td>
-                <td>{{ row.iqr }}</td>
-                <td>{{ row.min }}</td>
-                <td>{{ row.max }}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
+        <details class="table-panel top-gap">
+          <summary>Expand or collapse observation summaries</summary>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Observation</th>
+                  <th>Mean</th>
+                  <th>SD</th>
+                  <th>Median</th>
+                  <th>IQR</th>
+                  <th>Min</th>
+                  <th>Max</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in pair.observation_summaries %}
+                <tr>
+                  <td>{{ row.observation }}</td>
+                  <td>{{ row.mean }}</td>
+                  <td>{{ row.sd }}</td>
+                  <td>{{ row.median }}</td>
+                  <td>{{ row.iqr }}</td>
+                  <td>{{ row.min }}</td>
+                  <td>{{ row.max }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </details>
 
-        <div class="table-wrap top-gap">
-          <table>
-            <thead>
-              <tr>
-                <th>Pair</th>
-                <th>Bias</th>
-                <th>Typical error</th>
-                <th>Lower LoA</th>
-                <th>Upper LoA</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in pair.pair_metrics %}
-              <tr>
-                <td>{{ row.pair }}</td>
-                <td>{{ row.bias }}</td>
-                <td>{{ row.typical_error }}</td>
-                <td>{{ row.loa_lower }}</td>
-                <td>{{ row.loa_upper }}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
+        <details class="table-panel top-gap" open>
+          <summary>Expand or collapse agreement metrics</summary>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Pair</th>
+                  <th>Bias</th>
+                  <th>Typical error</th>
+                  <th>MDC 95%</th>
+                  <th>Lower LoA</th>
+                  <th>Upper LoA</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in pair.pair_metrics %}
+                <tr>
+                  <td>{{ row.pair }}</td>
+                  <td>{{ row.bias }}</td>
+                  <td>{{ row.typical_error }}</td>
+                  <td>{{ row.minimum_detectable_change_95 }}</td>
+                  <td>{{ row.loa_lower }}</td>
+                  <td>{{ row.loa_upper }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </details>
 
         {% if analysis.config.figure_action in ['view', 'both'] %}
         <div class="plot-grid top-gap">

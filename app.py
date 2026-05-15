@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import io
 import json
 import os
@@ -494,6 +495,7 @@ def build_typical_error_table(wide_frame: pd.DataFrame) -> list[dict]:
         bias = float(difference.mean())
         sd_difference = float(difference.std(ddof=1)) if len(difference) > 1 else 0.0
         typical_error = sd_difference / np.sqrt(2)
+        minimum_detectable_change_95 = typical_error * 1.96 * np.sqrt(2)
         loa_upper = bias + 1.96 * sd_difference
         loa_lower = bias - 1.96 * sd_difference
 
@@ -504,6 +506,7 @@ def build_typical_error_table(wide_frame: pd.DataFrame) -> list[dict]:
                 "second_column": second_column,
                 "bias": to_float(bias),
                 "typical_error": to_float(typical_error),
+                "minimum_detectable_change_95": to_float(minimum_detectable_change_95),
                 "loa_lower": to_float(loa_lower),
                 "loa_upper": to_float(loa_upper),
             }
@@ -703,6 +706,7 @@ def analyse_pair_result(
         "observation_total": observation_total,
         "pair_metrics": pair_metrics,
         "typical_error_formula": "Typical error = SD(differences) / √2",
+        "minimum_detectable_change_formula": "Minimum detectable change (95%) = Typical error × 1.96 × √2",
     }
 
 
@@ -835,6 +839,27 @@ def markdown_table(dataframe: pd.DataFrame) -> str:
     if len(numeric_columns) > 0:
         formatted[numeric_columns] = formatted[numeric_columns].round(4)
     return formatted.to_markdown(index=False)
+
+
+def dataframe_for_html(dataframe: pd.DataFrame, max_rows: int | None = None) -> pd.DataFrame:
+    frame = dataframe.copy().replace({np.nan: ""})
+    if max_rows is not None:
+        frame = frame.head(max_rows)
+
+    for column in frame.columns:
+        frame[column] = frame[column].map(
+            lambda value: f"{value:.4f}" if isinstance(value, float) else str(value)
+        )
+
+    return frame
+
+
+def html_table(dataframe: pd.DataFrame, max_rows: int | None = None) -> str:
+    frame = dataframe_for_html(dataframe, max_rows=max_rows)
+    if frame.empty:
+        return '<p class="report-empty">No rows available.</p>'
+
+    return frame.to_html(index=False, classes=["report-table"], border=0, escape=True)
 
 
 def load_package_versions() -> list[str]:
@@ -1079,8 +1104,9 @@ def build_pdf_report(analysis_record: dict) -> bytes:
             Paragraph("2. Drop rows with missing values for each selected pair.", styles["Normal"]),
             Paragraph("3. Reshape the pair data and run pingouin.intraclass_corr(...).", styles["Normal"]),
             Paragraph("4. Compute typical error as SD(y − x) / √2.", styles["Normal"]),
-            Paragraph("5. Compute bias and limits of agreement as bias ± 1.96 × SD(y − x).", styles["Normal"]),
-            Paragraph("6. Generate square scatter plots with a y = x line and Bland-Altman plots centered symmetrically around 0.", styles["Normal"]),
+            Paragraph("5. Compute minimum detectable change (95%) as typical error × 1.96 × √2.", styles["Normal"]),
+            Paragraph("6. Compute bias and limits of agreement as bias ± 1.96 × SD(y − x).", styles["Normal"]),
+            Paragraph("7. Generate square scatter plots with a y = x line and Bland-Altman plots centered symmetrically around 0.", styles["Normal"]),
         ]
     )
 
@@ -1115,6 +1141,7 @@ def build_pdf_report(analysis_record: dict) -> bytes:
                 Paragraph(f"Complete observations analysed: {pair_result['dataset_summary']['observations']}", styles["Normal"]),
                 Paragraph(f"Dropped rows due to missing values: {pair_result['dataset_summary']['dropped_rows']}", styles["Normal"]),
                 Paragraph(f"Typical error formula: {pair_result['typical_error_formula']}", styles["Normal"]),
+                Paragraph(f"Minimum detectable change formula: {pair_result['minimum_detectable_change_formula']}", styles["Normal"]),
                 Spacer(1, 0.12 * inch),
                 Paragraph("Overall descriptive summary", styles["Heading2"]),
                 pdf_table(overall_summary_frame),
@@ -1190,6 +1217,7 @@ def build_docx_report(analysis_record: dict) -> bytes:
         "Drop rows with missing values for each selected pair.",
         "Reshape the pair data and run pingouin.intraclass_corr(...).",
         "Compute typical error as SD(y − x) / √2.",
+        "Compute minimum detectable change (95%) as typical error × 1.96 × √2.",
         "Compute bias and limits of agreement as bias ± 1.96 × SD(y − x).",
         "Generate square scatter plots with a y = x line and Bland-Altman plots centered symmetrically around 0.",
     ]:
@@ -1217,6 +1245,7 @@ def build_docx_report(analysis_record: dict) -> bytes:
         document.add_paragraph(f"Complete observations analysed: {pair_result['dataset_summary']['observations']}")
         document.add_paragraph(f"Dropped rows due to missing values: {pair_result['dataset_summary']['dropped_rows']}")
         document.add_paragraph(f"Typical error formula: {pair_result['typical_error_formula']}")
+        document.add_paragraph(f"Minimum detectable change formula: {pair_result['minimum_detectable_change_formula']}")
 
         document.add_heading("Overall descriptive summary", level=2)
         add_docx_table(document, overall_summary_frame)
@@ -1311,6 +1340,7 @@ def build_markdown_report(analysis_record: dict, base_url: str | None = None) ->
             "melted = pair_frame.melt(id_vars='subject', var_name='rater', value_name='score')",
             "icc_table = pingouin.intraclass_corr(data=melted, targets='subject', raters='rater', ratings='score')",
             "typical_error = SD(y - x) / sqrt(2)",
+            "minimum_detectable_change_95 = typical_error * 1.96 * sqrt(2)",
             "bias = mean(y - x)",
             "limits_of_agreement = bias ± 1.96 * SD(y - x)",
             "scatter_plot = square plot with y = x reference line",
@@ -1367,6 +1397,7 @@ def build_markdown_report(analysis_record: dict, base_url: str | None = None) ->
                 f"- Complete observations analysed: {pair_result['dataset_summary']['observations']}",
                 f"- Dropped rows due to missing values: {pair_result['dataset_summary']['dropped_rows']}",
                 f"- Typical error formula: {pair_result['typical_error_formula']}",
+                f"- Minimum detectable change formula: {pair_result['minimum_detectable_change_formula']}",
                 "",
                 "### Overall descriptive summary",
                 "",
@@ -1416,6 +1447,164 @@ def build_markdown_report(analysis_record: dict, base_url: str | None = None) ->
             "- Full implementation source code is not embedded, but the commands and package set used by the app are listed above.",
         ]
     )
+    return "\n".join(lines)
+
+
+def build_html_report(analysis_record: dict, base_url: str | None = None) -> str:
+    config = analysis_record["config"]
+    upload_record = load_upload(config["upload_id"])
+    if upload_record is None:
+        raise AnalysisError("The source upload for this analysis is no longer available.")
+
+    source_frame = build_source_data_export_frame(upload_record, analysis_record)
+    selected_pairs = ", ".join(config.get("selected_pair_labels", [])) or "Manual column selection"
+    base_url = (base_url or "").rstrip("/")
+    package_versions = load_package_versions()
+
+    lines = [
+        "<!doctype html>",
+        '<html lang="en">',
+        "<head>",
+        '  <meta charset="utf-8">',
+        '  <meta name="viewport" content="width=device-width, initial-scale=1">',
+        "  <title>Reliability Analysis Report</title>",
+        "  <style>",
+        "    body { font-family: Segoe UI, Arial, sans-serif; margin: 0; padding: 32px; background: #f8fafc; color: #0f172a; }",
+        "    main { max-width: 1120px; margin: 0 auto; background: #ffffff; padding: 32px; border-radius: 18px; box-shadow: 0 14px 40px rgba(15, 23, 42, 0.08); }",
+        "    h1, h2, h3, h4 { color: #0f172a; }",
+        "    h1 { margin-top: 0; }",
+        "    p, li { line-height: 1.55; }",
+        "    .meta-list { padding-left: 20px; }",
+        "    .report-table { width: 100%; border-collapse: collapse; margin: 14px 0 24px; font-size: 0.95rem; }",
+        "    .report-table th, .report-table td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; vertical-align: top; }",
+        "    .report-table thead th { background: #dbeafe; }",
+        "    .report-empty { color: #475569; font-style: italic; }",
+        "    .formula { color: #334155; font-size: 0.95rem; }",
+        "    .plot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin-top: 16px; }",
+        "    .plot-card { border: 1px solid #cbd5e1; border-radius: 14px; padding: 14px; background: #f8fafc; }",
+        "    .plot-card img { width: 100%; height: auto; display: block; background: #fff; }",
+        "    pre, code { background: #e2e8f0; border-radius: 8px; }",
+        "    pre { padding: 14px; overflow-x: auto; }",
+        "  </style>",
+        "</head>",
+        "<body>",
+        "  <main>",
+        "    <h1>Reliability Analysis Report</h1>",
+        f"    <p>Generated: {html.escape(datetime.now().isoformat(timespec='seconds'))}</p>",
+        "    <h2>Analysed source data</h2>",
+        f"    <p>Source file: {html.escape(upload_record['original_filename'])}</p>",
+        f"    <p>Worksheet: {html.escape(config['selected_sheet'])}</p>",
+        f"    <p>Selected pairs: {html.escape(selected_pairs)}</p>",
+        f"    <p>Observation identifier: {html.escape(config.get('subject_column') or 'Generated row labels')}</p>",
+        f"    {html_table(source_frame)}",
+        "    <h2>Analysis description</h2>",
+        "    <ul class=\"meta-list\">",
+        f"      <li>Study design: {html.escape(analysis_record['recommendation']['design_label'])}</li>",
+        f"      <li>Agreement target: {html.escape(analysis_record['recommendation']['agreement_label'])}</li>",
+        f"      <li>Measurement unit: {html.escape(analysis_record['recommendation']['measurement_label'])}</li>",
+        f"      <li>Rationale: {html.escape(analysis_record['recommendation']['rationale'])}</li>",
+        f"      <li>Analysed pairs: {analysis_record['dataset_summary']['pair_count']}</li>",
+        f"      <li>Source rows: {analysis_record['dataset_summary']['source_rows']}</li>",
+        "    </ul>",
+        "    <h3>Python packages used</h3>",
+        "    <ul class=\"meta-list\">",
+    ]
+
+    lines.extend([f"      <li>{html.escape(package)}</li>" for package in package_versions])
+    lines.extend(
+        [
+            "    </ul>",
+            "    <h3>Commands and analysis steps used</h3>",
+            "    <pre><code>python app.py\npython run_web.py</code></pre>",
+            "    <ol>",
+            "      <li>Load the worksheet and selected columns.</li>",
+            "      <li>Drop rows with missing values for each selected pair.</li>",
+            "      <li>Reshape the pair data and run pingouin.intraclass_corr(...).</li>",
+            "      <li>Compute typical error as SD(y - x) / sqrt(2).</li>",
+            "      <li>Compute minimum detectable change (95%) as typical error * 1.96 * sqrt(2).</li>",
+            "      <li>Compute bias and limits of agreement as bias ± 1.96 * SD(y - x).</li>",
+            "      <li>Generate square scatter plots with a y = x line and Bland-Altman plots centered symmetrically around 0.</li>",
+            "    </ol>",
+        ]
+    )
+
+    for pair_result in analysis_record["pair_results"]:
+        overall_summary_frame = pd.DataFrame([pair_result["overall_summary"]])
+        column_summary_frame = pd.DataFrame(pair_result["column_summaries"])
+        observation_summary_frame = pd.DataFrame(pair_result["observation_summaries"])
+        pair_metrics_frame = pd.DataFrame(pair_result["pair_metrics"])
+        pair_source_frame = build_source_data_frame(upload_record, analysis_record, pair_result)
+        scatter_svg = (
+            f"{base_url}/plots/{analysis_record['id']}/{pair_result['pair_key']}/scatter.svg"
+            if base_url
+            else None
+        )
+        bland_svg = (
+            f"{base_url}/plots/{analysis_record['id']}/{pair_result['pair_key']}/bland-altman.svg"
+            if base_url
+            else None
+        )
+
+        lines.extend(
+            [
+                f"    <h2>Results for pair: {html.escape(pair_result['pair_label'])}</h2>",
+                "    <ul class=\"meta-list\">",
+                f"      <li>Columns: {html.escape(pair_result['primary_x_column'])} vs {html.escape(pair_result['primary_y_column'])}</li>",
+                f"      <li>ICC model: {html.escape(pair_result['icc_result']['model'])}</li>",
+                f"      <li>ICC estimate: {pair_result['icc_result']['estimate']}</li>",
+                f"      <li>95% CI: {pair_result['icc_result']['ci_lower']} to {pair_result['icc_result']['ci_upper']}</li>",
+                f"      <li>F value: {pair_result['icc_result']['f_value']}</li>",
+                f"      <li>P value: {pair_result['icc_result']['p_value']}</li>",
+                f"      <li>Description: {html.escape(pair_result['icc_result']['description'])}</li>",
+                f"      <li>Complete observations analysed: {pair_result['dataset_summary']['observations']}</li>",
+                f"      <li>Dropped rows due to missing values: {pair_result['dataset_summary']['dropped_rows']}</li>",
+                "    </ul>",
+                f"    <p class=\"formula\">Typical error formula: {html.escape(pair_result['typical_error_formula'])}</p>",
+                f"    <p class=\"formula\">Minimum detectable change formula: {html.escape(pair_result['minimum_detectable_change_formula'])}</p>",
+                "    <h3>Overall descriptive summary</h3>",
+                f"    {html_table(overall_summary_frame)}",
+                "    <h3>Series summaries</h3>",
+                f"    {html_table(column_summary_frame)}",
+                "    <h3>Observation summaries</h3>",
+                f"    {html_table(observation_summary_frame)}",
+                "    <h3>Typical error, minimum detectable change, and limits of agreement</h3>",
+                f"    {html_table(pair_metrics_frame)}",
+                "    <h3>Source data used for this pair</h3>",
+                f"    {html_table(pair_source_frame)}",
+            ]
+        )
+
+        if scatter_svg and bland_svg:
+            lines.extend(
+                [
+                    "    <h3>Figures</h3>",
+                    '    <div class="plot-grid">',
+                    '      <section class="plot-card">',
+                    f"        <h4>Scatter plot: {html.escape(pair_result['pair_label'])}</h4>",
+                    f"        <img src=\"{html.escape(scatter_svg)}\" alt=\"Scatter plot for {html.escape(pair_result['pair_label'])}\">",
+                    "      </section>",
+                    '      <section class="plot-card">',
+                    f"        <h4>Bland-Altman plot: {html.escape(pair_result['pair_label'])}</h4>",
+                    f"        <img src=\"{html.escape(bland_svg)}\" alt=\"Bland-Altman plot for {html.escape(pair_result['pair_label'])}\">",
+                    "      </section>",
+                    "    </div>",
+                ]
+            )
+
+    lines.extend(
+        [
+            "    <h2>Notes</h2>",
+            '    <ul class="meta-list">',
+            "      <li>This report includes the analysed source rows after pair-specific missing-value filtering.</li>",
+            "      <li>This HTML report combines the analysed data, analysis description, results, and figure embeds in one file.</li>",
+            "      <li>Full implementation source code is not embedded, but the commands and package set used by the app are listed above.</li>",
+            "    </ul>",
+            "  </main>",
+            "</body>",
+            "</html>",
+        ]
+    )
+
     return "\n".join(lines)
 
 
@@ -1764,6 +1953,28 @@ def markdown_report(analysis_id: str):
     return send_file(
         buffer,
         mimetype="text/markdown; charset=utf-8",
+        as_attachment=True,
+        download_name=download_name,
+    )
+
+
+@app.get("/reports/<analysis_id>.html")
+def html_report(analysis_id: str):
+    ensure_storage()
+    analysis_record = load_analysis(analysis_id)
+    if analysis_record is None:
+        abort(404)
+
+    try:
+        report = build_html_report(analysis_record, request.url_root)
+    except AnalysisError:
+        abort(404)
+
+    buffer = io.BytesIO(report.encode("utf-8"))
+    download_name = f"reliability-results-{analysis_id}.html"
+    return send_file(
+        buffer,
+        mimetype="text/html; charset=utf-8",
         as_attachment=True,
         download_name=download_name,
     )

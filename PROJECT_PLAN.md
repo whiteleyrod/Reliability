@@ -25,10 +25,11 @@ This plan now also serves as an implementation record.
 - Observation-level descriptive summaries
 - Median and IQR included in descriptive outputs
 - Residual mean square error included at the analysis-level descriptive summary
-- Typical error, bias, and limits of agreement calculations
+- Typical error, minimum detectable change (95%), bias, and limits of agreement calculations
 - Square scatter plots with `y = x`
 - Bland-Altman plots centred symmetrically around `0`
 - SVG preview and SVG/PDF figure download routes
+- HTML report export including data, methods, results, and figures
 - PDF report export including data, methods, results, and figures
 - DOCX report export including embedded SVG figure parts with PNG fallbacks for Word compatibility
 - CSV export of analysed source data
@@ -58,7 +59,7 @@ Build a web-based application that allows users to upload `.xlsx` or `.csv` file
 - descriptive summaries including mean, SD, median, IQR, and residual mean square error
 - Scatter plots
 - Bland-Altman plots
-- PDF and DOCX report exports
+- HTML, PDF, and DOCX report exports
 
 ## 2. Core User Workflow
 
@@ -87,7 +88,8 @@ Build a web-based application that allows users to upload `.xlsx` or `.csv` file
 10. Application generates visual outputs:
    - scatter plots between raters
    - Bland-Altman plots
-11. User downloads or saves results as CSV, PDF, or DOCX.
+11. User downloads or saves results as CSV, HTML, PDF, or DOCX.
+12. User can expand or collapse data tables to reduce on-screen clutter.
 
 ## 3. Functional Requirements
 
@@ -148,6 +150,7 @@ Implementation status:
 - Include median and IQR in descriptive summaries
 - Include residual mean square error in the overall descriptive summary for the selected analysis
 - Compute typical error metrics and define clearly how they are calculated
+- Compute minimum detectable change (95%) and define clearly how it is calculated
 - Report sample size, number of raters, and missing-data handling
 - Display assumptions and caveats
 - Return informative errors when the dataset is not valid for the selected ICC
@@ -291,6 +294,7 @@ Status: implemented with CSV, PDF, and DOCX export options
 - Define a clear policy for missing values
 - Define exactly which descriptive statistics are shown at group and observation-set level
 - Define the chosen typical error formula and ensure it is reported transparently
+- Define the minimum detectable change formula and ensure it is reported transparently
 - Ensure the ICC recommendation logic matches standard statistical definitions
 - Document exactly which ICC notation is used, for example:
   - ICC(1,1)
