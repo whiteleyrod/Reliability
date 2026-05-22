@@ -11,9 +11,12 @@ from matplotlib.collections import PolyCollection
 from app import (
     app,
     build_bland_altman_plot,
+    build_explicit_pair_definitions,
     build_html_report,
     build_markdown_report,
+    build_selected_pair_definitions,
     format_fixed_decimal,
+    form_state_from_request,
     build_regression_confidence_band,
     build_scatter_plot,
     build_typical_error_table,
@@ -121,6 +124,75 @@ class ReliabilityAppTests(unittest.TestCase):
         expected_mdc = round(float((expected_sd / np.sqrt(2)) * 1.96 * np.sqrt(2)), 4)
         self.assertEqual(metrics[0]["typical_error"], expected_te)
         self.assertEqual(metrics[0]["minimum_detectable_change_95"], expected_mdc)
+
+    def test_build_explicit_pair_definitions_uses_selected_headers(self) -> None:
+        pair_definitions = build_explicit_pair_definitions(
+            [
+                {"pair_label": "Jump height", "primary_x_column": "Jump Test 1", "primary_y_column": "Jump Test 2"},
+                {"pair_label": "Sprint time", "primary_x_column": "Sprint Test 1", "primary_y_column": "Sprint Test 2"},
+            ],
+            ["Jump Test 1", "Jump Test 2", "Sprint Test 1", "Sprint Test 2"],
+        )
+
+        self.assertEqual(len(pair_definitions), 2)
+        self.assertEqual(pair_definitions[0]["pair_label"], "Jump height")
+        self.assertEqual(pair_definitions[0]["measurement_columns"], ["Jump Test 1", "Jump Test 2"])
+        self.assertEqual(pair_definitions[1]["pair_key"], "manual-sprint-test-1-vs-sprint-test-2")
+
+    def test_build_selected_pair_definitions_keeps_detected_pair_flow(self) -> None:
+        sheet_meta = {
+            "numeric_columns": ["Jump Test 1", "Jump Test 2", "Sprint Test 1", "Sprint Test 2"],
+            "detected_pairs": [
+                {
+                    "key": "jump",
+                    "label": "Jump",
+                    "test_1": "Jump Test 1",
+                    "test_2": "Jump Test 2",
+                }
+            ],
+        }
+
+        pair_definitions = build_selected_pair_definitions(
+            sheet_meta,
+            selected_pair_keys=["jump"],
+            measurement_columns=["Jump Test 1", "Jump Test 2"],
+            primary_x_column="Jump Test 1",
+            primary_y_column="Jump Test 2",
+        )
+
+        self.assertEqual(len(pair_definitions), 1)
+        self.assertEqual(pair_definitions[0]["pair_key"], "jump")
+        self.assertEqual(pair_definitions[0]["pair_label"], "Jump")
+
+    def test_form_state_from_request_builds_explicit_pairs(self) -> None:
+        sheet_meta = {
+            "name": "Sheet1",
+            "columns": ["Subject", "Jump Test 1", "Jump Test 2", "Sprint Test 1", "Sprint Test 2"],
+            "numeric_columns": ["Jump Test 1", "Jump Test 2", "Sprint Test 1", "Sprint Test 2"],
+            "detected_pairs": [],
+        }
+
+        with app.test_request_context(
+            "/",
+            method="POST",
+            data={
+                "sheet_name": "Sheet1",
+                "subject_column": "Subject",
+                "pair_label": ["Jump", "Sprint"],
+                "pair_x_column": ["Jump Test 1", "Sprint Test 1"],
+                "pair_y_column": ["Jump Test 2", "Sprint Test 2"],
+            },
+        ):
+            form_state = form_state_from_request(sheet_meta)
+
+        self.assertEqual(form_state["selected_pair_keys"], [])
+        self.assertEqual(form_state["primary_x_column"], "Jump Test 1")
+        self.assertEqual(form_state["primary_y_column"], "Jump Test 2")
+        self.assertEqual(
+            form_state["measurement_columns"],
+            ["Jump Test 1", "Jump Test 2", "Sprint Test 1", "Sprint Test 2"],
+        )
+        self.assertEqual(len(form_state["pair_selections"]), 2)
 
     def test_build_html_report_includes_metrics_and_figures(self) -> None:
         upload_record = {

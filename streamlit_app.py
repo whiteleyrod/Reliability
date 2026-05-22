@@ -90,6 +90,36 @@ def default_measurement_columns(sheet_meta: dict) -> list[str]:
     return sheet_meta.get("numeric_columns", [])[:2]
 
 
+def default_pair_selections(sheet_meta: dict, analysis_record: dict | None = None) -> list[dict]:
+    if analysis_record:
+        saved_pair_selections = analysis_record.get("config", {}).get("pair_selections", [])
+        if saved_pair_selections:
+            return saved_pair_selections
+
+    detected_pairs = sheet_meta.get("detected_pairs", [])
+    if detected_pairs:
+        return [
+            {
+                "pair_label": pair["label"],
+                "primary_x_column": pair["test_1"],
+                "primary_y_column": pair["test_2"],
+            }
+            for pair in detected_pairs[: min(3, len(detected_pairs))]
+        ]
+
+    numeric_columns = sheet_meta.get("numeric_columns", [])
+    if len(numeric_columns) >= 2:
+        return [
+            {
+                "pair_label": f"{numeric_columns[0]} vs {numeric_columns[1]}",
+                "primary_x_column": numeric_columns[0],
+                "primary_y_column": numeric_columns[1],
+            }
+        ]
+
+    return []
+
+
 def render_pair_section(upload_record: dict, analysis_record: dict, pair_result: dict) -> None:
     st.subheader(pair_result["pair_label"])
     figure_palette = analysis_record["config"].get("figure_palette", DEFAULT_FIGURE_PALETTE)
@@ -185,19 +215,24 @@ def main() -> None:
     sheet_names = [sheet["name"] for sheet in upload_record["sheets"]]
     selected_sheet = st.selectbox("Worksheet", options=sheet_names)
     sheet_meta = get_sheet_meta(upload_record, selected_sheet)
-    preview_frame = read_dataset(UPLOAD_DIR / upload_record["stored_filename"], upload_record["file_type"], selected_sheet)
+    source_preview_frame = read_dataset(UPLOAD_DIR / upload_record["stored_filename"], upload_record["file_type"], selected_sheet)
 
     with st.expander("Preview data", expanded=False):
-        st.dataframe(preview_frame.head(12), use_container_width=True)
+        st.dataframe(source_preview_frame.head(12), use_container_width=True)
 
     numeric_columns = sheet_meta.get("numeric_columns", [])
     if len(numeric_columns) < 2:
         st.error("At least two numeric columns are required for reliability analysis.")
         return
 
+    analysis_record = st.session_state.get("analysis_record")
+    if analysis_record and analysis_record["config"].get("upload_id") != upload_record["id"]:
+        analysis_record = None
+    if analysis_record and analysis_record["config"].get("selected_sheet") != selected_sheet:
+        analysis_record = None
+
     detected_pairs = sheet_meta.get("detected_pairs", [])
-    pair_lookup = {pair["key"]: f"{pair['label']}: {pair['test_1']} ↔ {pair['test_2']}" for pair in detected_pairs}
-    default_measurements = default_measurement_columns(sheet_meta)
+    default_pair_rows = default_pair_selections(sheet_meta, analysis_record)
     palette_options = figure_palette_options()
     palette_labels = [option["label"] for option in palette_options]
     palette_keys_by_label = {option["label"]: option["key"] for option in palette_options}
@@ -219,14 +254,54 @@ def main() -> None:
     selected_palette_key = palette_keys_by_label[selected_palette_label]
     st.session_state["figure_palette"] = selected_palette_key
 
-    preview_frame = build_palette_preview_frame()
+    palette_preview_frame = build_palette_preview_frame()
     preview_column_1, preview_column_2 = st.columns(2)
     with preview_column_1:
         st.caption("Scatter preview")
-        st.pyplot(build_scatter_plot(preview_frame, "Test 1", "Test 2", selected_palette_key), use_container_width=True)
+        st.pyplot(build_scatter_plot(palette_preview_frame, "Test 1", "Test 2", selected_palette_key), use_container_width=True)
     with preview_column_2:
         st.caption("Bland-Altman preview")
-        st.pyplot(build_bland_altman_plot(preview_frame, "Test 1", "Test 2", selected_palette_key), use_container_width=True)
+        st.pyplot(build_bland_altman_plot(palette_preview_frame, "Test 1", "Test 2", selected_palette_key), use_container_width=True)
+
+    with st.expander("Available measurement columns", expanded=False):
+        st.dataframe(
+            pd.DataFrame({"Measurement column": numeric_columns}),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    with st.expander("Suggested column pairs", expanded=False):
+        if detected_pairs:
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Suggested pair": pair["label"],
+                            "X column": pair["test_1"],
+                            "Y column": pair["test_2"],
+                        }
+                        for pair in detected_pairs
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption("Use these suggestions as a guide, then confirm the exact pairs you want below.")
+        else:
+            st.info("No automatic Test 1/Test 2 suggestions were detected for this worksheet.")
+
+    pair_count = st.number_input(
+        "Number of analysis pairs",
+        min_value=1,
+        max_value=min(12, max(1, len(numeric_columns) * (len(numeric_columns) - 1))),
+        value=max(1, len(default_pair_rows)),
+        step=1,
+        help=(
+            "Choose how many X/Y column pairs you want to analyse. "
+            "Each pair below becomes a separate reliability analysis with its own plots and results."
+        ),
+        key=f"pair-count-{upload_record['id']}-{selected_sheet}",
+    )
 
     with st.form("analysis-form"):
         subject_options = [""] + sheet_meta["columns"]
@@ -240,47 +315,49 @@ def main() -> None:
             ),
             format_func=lambda value: "Use generated row labels" if value == "" else value,
         )
-        selected_pair_keys = st.multiselect(
-            "Detected reliability pairs",
-            options=list(pair_lookup.keys()),
-            default=list(pair_lookup.keys())[:1],
-            help=(
-                "These are suggested Test 1 / Test 2 style column pairs that appear to belong together. "
-                "Select the ones you want to analyse. If the suggestions are not right, leave them unselected and use the manual X and Y choices instead."
-            ),
-            format_func=lambda key: pair_lookup[key],
-        )
-        measurement_columns = st.multiselect(
-            "Measurement columns",
-            options=numeric_columns,
-            default=default_measurements,
-            help=(
-                "Select the numeric columns that contain the actual scores or measurements you want to compare. "
-                "These are usually values from raters, devices, sessions, or test occasions, not names or text labels."
-            ),
-        )
 
-        plot_column_1, plot_column_2 = st.columns(2)
-        with plot_column_1:
-            primary_x_column = st.selectbox(
-                "Primary plot X column",
-                options=numeric_columns,
-                index=numeric_columns.index(default_measurements[0]) if default_measurements else 0,
-                help=(
-                    "Choose the measurement column to place on the horizontal axis of the scatter plot. "
-                    "This is usually the first test, first rater, or reference measurement you want to compare."
-                ),
-            )
-        with plot_column_2:
-            default_y_index = 1 if len(default_measurements) > 1 else min(1, len(numeric_columns) - 1)
-            primary_y_column = st.selectbox(
-                "Primary plot Y column",
-                options=numeric_columns,
-                index=numeric_columns.index(default_measurements[1]) if len(default_measurements) > 1 else default_y_index,
-                help=(
-                    "Choose the measurement column to place on the vertical axis of the scatter plot. "
-                    "This is usually the second test, second rater, or comparison measurement matched against the X column."
-                ),
+        st.markdown("**Pairs to analyse**")
+        st.caption("Pick the exact column headers you want to compare. Each row below runs as a separate analysis.")
+
+        pair_selections: list[dict] = []
+        for pair_index in range(int(pair_count)):
+            default_pair = default_pair_rows[pair_index] if pair_index < len(default_pair_rows) else {}
+            pair_columns = st.columns([1.2, 1, 1])
+            with pair_columns[0]:
+                pair_label = st.text_input(
+                    f"Pair {pair_index + 1} label",
+                    value=default_pair.get("pair_label", ""),
+                    help="Optional short name for this comparison. If left blank, the app will use the selected X and Y column names.",
+                    key=f"pair-label-{upload_record['id']}-{selected_sheet}-{pair_index}",
+                )
+            with pair_columns[1]:
+                default_x = default_pair.get("primary_x_column", numeric_columns[0])
+                default_x_index = numeric_columns.index(default_x) if default_x in numeric_columns else 0
+                pair_x_column = st.selectbox(
+                    f"Pair {pair_index + 1} X column",
+                    options=numeric_columns,
+                    index=default_x_index,
+                    help="Choose the measurement column to place on the horizontal axis and treat as the first value in this pair.",
+                    key=f"pair-x-{upload_record['id']}-{selected_sheet}-{pair_index}",
+                )
+            with pair_columns[2]:
+                fallback_y = numeric_columns[min(1, len(numeric_columns) - 1)]
+                default_y = default_pair.get("primary_y_column", fallback_y)
+                default_y_index = numeric_columns.index(default_y) if default_y in numeric_columns else min(1, len(numeric_columns) - 1)
+                pair_y_column = st.selectbox(
+                    f"Pair {pair_index + 1} Y column",
+                    options=numeric_columns,
+                    index=default_y_index,
+                    help="Choose the measurement column to place on the vertical axis and treat as the second value in this pair.",
+                    key=f"pair-y-{upload_record['id']}-{selected_sheet}-{pair_index}",
+                )
+
+            pair_selections.append(
+                {
+                    "pair_label": pair_label,
+                    "primary_x_column": pair_x_column,
+                    "primary_y_column": pair_y_column,
+                }
             )
 
         setting_column_1, setting_column_2, setting_column_3 = st.columns(3)
@@ -323,26 +400,37 @@ def main() -> None:
 
     if submitted:
         try:
+            measurement_columns = list(
+                dict.fromkeys(
+                    column
+                    for pair_selection in pair_selections
+                    for column in (
+                        pair_selection["primary_x_column"],
+                        pair_selection["primary_y_column"],
+                    )
+                )
+            )
             analysis_result = analyse_wide_dataset(
                 upload_record=upload_record,
                 sheet_name=selected_sheet,
                 subject_column=subject_column or None,
                 measurement_columns=measurement_columns,
-                primary_x_column=primary_x_column,
-                primary_y_column=primary_y_column,
-                selected_pair_keys=selected_pair_keys,
+                primary_x_column=pair_selections[0]["primary_x_column"] if pair_selections else "",
+                primary_y_column=pair_selections[0]["primary_y_column"] if pair_selections else "",
+                selected_pair_keys=[],
                 study_design=STUDY_DESIGN_OPTIONS[study_design_label],
                 agreement_definition=AGREEMENT_OPTIONS[agreement_label],
                 measurement_unit=MEASUREMENT_OPTIONS[measurement_label],
                 figure_palette=selected_palette_key,
                 figure_action="both",
+                pair_selections=pair_selections,
             )
             st.session_state["analysis_record"] = {"id": uuid4().hex, **analysis_result}
+            analysis_record = st.session_state["analysis_record"]
         except AnalysisError as exc:
             st.error(str(exc))
             return
 
-    analysis_record = st.session_state.get("analysis_record")
     if not analysis_record or analysis_record["config"]["upload_id"] != upload_record["id"]:
         return
 

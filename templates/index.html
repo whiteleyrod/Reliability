@@ -214,82 +214,122 @@
           </div>
 
           <fieldset>
-            <legend class="field-label">Detected reliability pairs
-              <span class="tooltip" tabindex="0" aria-label="Detected reliability pairs help">
+            <legend class="field-label">Available measurement columns
+              <span class="tooltip" tabindex="0" aria-label="Measurement columns help">
                 <span class="tooltip-trigger">?</span>
                 <span class="tooltip-content">
-                  These are column pairs the app thinks belong together, such as Test 1 and Test 2 for the same measure. Select the pairs you want to analyse. If the suggestions do not look right, you can leave them unchecked and use the manual X and Y column choices below.
+                  These are the numeric column headers available for reliability analysis. Review them here, then build the exact X and Y pairs you want to compare below.
+                </span>
+              </span>
+            </legend>
+            <div class="pill-list">
+              {% for column in form_state.numeric_columns %}
+              <span class="pill">{{ column }}</span>
+              {% endfor %}
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend class="field-label">Suggested column pairs
+              <span class="tooltip" tabindex="0" aria-label="Suggested column pairs help">
+                <span class="tooltip-trigger">?</span>
+                <span class="tooltip-content">
+                  These are automatic suggestions based on column names such as Test 1 and Test 2. Use them as quick starting points, then review the exact pairs you want to analyse below.
                 </span>
               </span>
             </legend>
             {% if form_state.detected_pairs %}
-            <div class="pair-grid">
+            <div class="suggestion-grid" id="suggested-pair-grid">
               {% for pair in form_state.detected_pairs %}
-              <label class="pair-card">
-                <input type="checkbox" name="selected_pair_keys" value="{{ pair.key }}" {% if pair.key in form_state.selected_pair_keys %}checked{% endif %} />
+              <button
+                type="button"
+                class="pair-card suggestion-button"
+                data-pair-label="{{ pair.label }}"
+                data-pair-x="{{ pair.test_1 }}"
+                data-pair-y="{{ pair.test_2 }}"
+              >
                 <span class="pair-title">{{ pair.label }}</span>
                 <span class="pair-meta">{{ pair.test_1 }} ↔ {{ pair.test_2 }}</span>
-              </label>
+              </button>
               {% endfor %}
             </div>
-            <p class="subtle">Select one or more guessed pairs. If none are selected, the app falls back to the manual X/Y pair below.</p>
+            <p class="subtle">Click a suggested pair to add it to the analysis list.</p>
             {% else %}
-            <p class="subtle">No automatic Test 1/Test 2 pairs were detected in this worksheet.</p>
+            <p class="subtle">No automatic Test 1/Test 2 suggestions were detected in this worksheet.</p>
             {% endif %}
           </fieldset>
 
           <fieldset>
-            <legend class="field-label">Select measurement columns
-              <span class="tooltip" tabindex="0" aria-label="Measurement columns help">
+            <legend class="field-label">Pairs to analyse
+              <span class="tooltip" tabindex="0" aria-label="Pairs to analyse help">
                 <span class="tooltip-trigger">?</span>
                 <span class="tooltip-content">
-                  Tick the numeric columns that contain the scores or measurements you want to compare. In most cases, these are the results from different raters, devices, sessions, or test occasions. Leave out ID columns, notes, or other descriptive text columns.
+                  Choose the exact X and Y column headers for each comparison you want to run. Each row below becomes a separate reliability analysis with its own plots and results.
                 </span>
               </span>
             </legend>
-            <div class="checkbox-grid">
-              {% for column in form_state.numeric_columns %}
-              <label class="check-card">
-                <input type="checkbox" name="measurement_columns" value="{{ column }}" {% if column in form_state.measurement_columns %}checked{% endif %} />
-                <span>{{ column }}</span>
-              </label>
+            <div id="pair-builder" class="pair-builder">
+              {% for pair_selection in form_state.pair_selections %}
+              <div class="pair-row" data-pair-row>
+                <label>
+                  <span>Pair label</span>
+                  <input type="text" name="pair_label" value="{{ pair_selection.pair_label }}" placeholder="Optional short name" />
+                </label>
+                <label>
+                  <span>X column</span>
+                  <select name="pair_x_column">
+                    {% for column in form_state.numeric_columns %}
+                    <option value="{{ column }}" {% if column == pair_selection.primary_x_column %}selected{% endif %}>{{ column }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label>
+                  <span>Y column</span>
+                  <select name="pair_y_column">
+                    {% for column in form_state.numeric_columns %}
+                    <option value="{{ column }}" {% if column == pair_selection.primary_y_column %}selected{% endif %}>{{ column }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <div class="pair-row-actions">
+                  <button type="button" class="secondary remove-pair-button" data-remove-pair>Remove</button>
+                </div>
+              </div>
               {% endfor %}
             </div>
+            <div class="pair-builder-toolbar">
+              <button type="button" class="secondary" id="add-pair-button">Add another pair</button>
+            </div>
+            <p class="subtle">The first pair in this list will be shown first in the results. You can add or remove rows before running the analysis.</p>
           </fieldset>
 
-          <div class="field-grid">
-            <label>
-              <span class="field-label">Primary plot X column
-                <span class="tooltip" tabindex="0" aria-label="Primary plot X column help">
-                  <span class="tooltip-trigger">?</span>
-                  <span class="tooltip-content">
-                    Choose the measurement column you want to place on the horizontal axis of the scatter plot. This is usually the first test, first rater, or reference measurement you want to compare.
-                  </span>
-                </span>
-              </span>
-              <select name="primary_x_column">
-                {% for column in form_state.numeric_columns %}
-                <option value="{{ column }}" {% if column == form_state.primary_x_column %}selected{% endif %}>{{ column }}</option>
-                {% endfor %}
-              </select>
-            </label>
-
-            <label>
-              <span class="field-label">Primary plot Y column
-                <span class="tooltip" tabindex="0" aria-label="Primary plot Y column help">
-                  <span class="tooltip-trigger">?</span>
-                  <span class="tooltip-content">
-                    Choose the measurement column you want to place on the vertical axis of the scatter plot. This is usually the second test, second rater, or comparison measurement matched against the X column.
-                  </span>
-                </span>
-              </span>
-              <select name="primary_y_column">
-                {% for column in form_state.numeric_columns %}
-                <option value="{{ column }}" {% if column == form_state.primary_y_column %}selected{% endif %}>{{ column }}</option>
-                {% endfor %}
-              </select>
-            </label>
-          </div>
+          <template id="pair-row-template">
+            <div class="pair-row" data-pair-row>
+              <label>
+                <span>Pair label</span>
+                <input type="text" name="pair_label" value="" placeholder="Optional short name" />
+              </label>
+              <label>
+                <span>X column</span>
+                <select name="pair_x_column">
+                  {% for column in form_state.numeric_columns %}
+                  <option value="{{ column }}" {% if loop.first %}selected{% endif %}>{{ column }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>
+                <span>Y column</span>
+                <select name="pair_y_column">
+                  {% for column in form_state.numeric_columns %}
+                  <option value="{{ column }}" {% if loop.index == 2 or (loop.first and form_state.numeric_columns|length == 1) %}selected{% endif %}>{{ column }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <div class="pair-row-actions">
+                <button type="button" class="secondary remove-pair-button" data-remove-pair>Remove</button>
+              </div>
+            </div>
+          </template>
 
           <div class="field-grid three-up">
             <label>
@@ -694,17 +734,113 @@
         const paletteSelect = document.getElementById("figure-palette-select");
         const scatterPreview = document.getElementById("scatter-palette-preview");
         const blandPreview = document.getElementById("bland-palette-preview");
-        if (!paletteSelect || !scatterPreview || !blandPreview) {
-          return;
-        }
+        const pairBuilder = document.getElementById("pair-builder");
+        const pairRowTemplate = document.getElementById("pair-row-template");
+        const addPairButton = document.getElementById("add-pair-button");
+        const suggestionGrid = document.getElementById("suggested-pair-grid");
 
         const updatePreview = () => {
+          if (!paletteSelect || !scatterPreview || !blandPreview) {
+            return;
+          }
+
           const palette = encodeURIComponent(paletteSelect.value);
           scatterPreview.src = "{{ url_for('palette_preview', plot_kind='scatter') }}?palette=" + palette;
           blandPreview.src = "{{ url_for('palette_preview', plot_kind='bland-altman') }}?palette=" + palette;
         };
 
-        paletteSelect.addEventListener("change", updatePreview);
+        const updateRemoveButtons = () => {
+          if (!pairBuilder) {
+            return;
+          }
+
+          const rows = Array.from(pairBuilder.querySelectorAll("[data-pair-row]"));
+          rows.forEach((row) => {
+            const removeButton = row.querySelector("[data-remove-pair]");
+            if (removeButton) {
+              removeButton.disabled = rows.length === 1;
+              removeButton.hidden = rows.length === 1;
+            }
+          });
+        };
+
+        const addPairRow = (label, xColumn, yColumn) => {
+          if (!pairBuilder || !pairRowTemplate) {
+            return;
+          }
+
+          const fragment = pairRowTemplate.content.cloneNode(true);
+          const row = fragment.querySelector("[data-pair-row]");
+          if (!row) {
+            return;
+          }
+
+          const labelInput = row.querySelector('input[name="pair_label"]');
+          const xSelect = row.querySelector('select[name="pair_x_column"]');
+          const ySelect = row.querySelector('select[name="pair_y_column"]');
+
+          if (labelInput) {
+            labelInput.value = label || "";
+          }
+          if (xSelect && xColumn) {
+            xSelect.value = xColumn;
+          }
+          if (ySelect && yColumn) {
+            ySelect.value = yColumn;
+          }
+
+          pairBuilder.appendChild(fragment);
+          updateRemoveButtons();
+        };
+
+        if (paletteSelect && scatterPreview && blandPreview) {
+          paletteSelect.addEventListener("change", updatePreview);
+        }
+
+        if (addPairButton) {
+          addPairButton.addEventListener("click", () => addPairRow("", "", ""));
+        }
+
+        if (pairBuilder) {
+          pairBuilder.addEventListener("click", (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) {
+              return;
+            }
+
+            if (!target.matches("[data-remove-pair]")) {
+              return;
+            }
+
+            const row = target.closest("[data-pair-row]");
+            if (row && pairBuilder.querySelectorAll("[data-pair-row]").length > 1) {
+              row.remove();
+              updateRemoveButtons();
+            }
+          });
+        }
+
+        if (suggestionGrid) {
+          suggestionGrid.addEventListener("click", (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) {
+              return;
+            }
+
+            const button = target.closest(".suggestion-button");
+            if (!(button instanceof HTMLElement)) {
+              return;
+            }
+
+            addPairRow(
+              button.dataset.pairLabel || "",
+              button.dataset.pairX || "",
+              button.dataset.pairY || "",
+            );
+          });
+        }
+
+        updateRemoveButtons();
       }());
     </script>
   </body>

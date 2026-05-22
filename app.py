@@ -689,13 +689,66 @@ def manual_pair_key(x_column: str, y_column: str) -> str:
     return f"manual-{slugify(x_column)}-vs-{slugify(y_column)}"
 
 
+def build_pair_selection(label: str, x_column: str, y_column: str) -> dict:
+    cleaned_label = str(label).strip() or f"{x_column} vs {y_column}"
+    return {
+        "pair_key": manual_pair_key(x_column, y_column),
+        "pair_label": cleaned_label,
+        "measurement_columns": [x_column, y_column],
+        "primary_x_column": x_column,
+        "primary_y_column": y_column,
+    }
+
+
+def build_explicit_pair_definitions(
+    pair_selections: list[dict] | None,
+    allowed_columns: list[str],
+) -> list[dict]:
+    if not pair_selections:
+        return []
+
+    pair_definitions: list[dict] = []
+    seen_pairs: set[tuple[str, str]] = set()
+
+    for pair_selection in pair_selections:
+        x_column = str(pair_selection.get("primary_x_column") or pair_selection.get("x_column") or "").strip()
+        y_column = str(pair_selection.get("primary_y_column") or pair_selection.get("y_column") or "").strip()
+        pair_label = str(pair_selection.get("pair_label") or pair_selection.get("label") or "").strip()
+
+        if not x_column and not y_column and not pair_label:
+            continue
+
+        if not x_column or not y_column:
+            raise AnalysisError("Complete each selected pair by choosing both an X column and a Y column.")
+
+        if x_column == y_column:
+            raise AnalysisError("Each selected pair must use two different measurement columns.")
+
+        if x_column not in allowed_columns or y_column not in allowed_columns:
+            raise AnalysisError("Select pair columns from the available numeric measurement columns.")
+
+        pair_key = (x_column, y_column)
+        if pair_key in seen_pairs:
+            raise AnalysisError("Remove duplicate analysis pairs before running the analysis.")
+        seen_pairs.add(pair_key)
+
+        pair_definitions.append(build_pair_selection(pair_label, x_column, y_column))
+
+    return pair_definitions
+
+
 def build_selected_pair_definitions(
     sheet_meta: dict,
     selected_pair_keys: list[str],
     measurement_columns: list[str],
     primary_x_column: str,
     primary_y_column: str,
+    pair_selections: list[dict] | None = None,
 ) -> list[dict]:
+    explicit_pair_definitions = build_explicit_pair_definitions(pair_selections, sheet_meta.get("numeric_columns", []))
+    if explicit_pair_definitions:
+        return explicit_pair_definitions
+
     selected_pairs: list[dict] = []
 
     for pair_key in selected_pair_keys:
@@ -811,6 +864,7 @@ def analyse_wide_dataset(
     measurement_unit: str,
     figure_palette: str,
     figure_action: str,
+    pair_selections: list[dict] | None = None,
 ) -> dict:
     dataframe = read_dataset(get_upload_path(upload_record), upload_record["file_type"], sheet_name)
     sheet_meta = get_sheet_meta(upload_record, sheet_name)
@@ -821,7 +875,17 @@ def analyse_wide_dataset(
         measurement_columns,
         primary_x_column,
         primary_y_column,
+        pair_selections,
     )
+    resolved_measurement_columns = list(
+        dict.fromkeys(
+            column
+            for pair_definition in pair_definitions
+            for column in pair_definition["measurement_columns"]
+        )
+    )
+    resolved_primary_x_column = pair_definitions[0]["primary_x_column"] if pair_definitions else primary_x_column
+    resolved_primary_y_column = pair_definitions[0]["primary_y_column"] if pair_definitions else primary_y_column
     pair_results = [
         analyse_pair_result(dataframe, subject_column, pair_definition, recommendation)
         for pair_definition in pair_definitions
@@ -832,11 +896,19 @@ def analyse_wide_dataset(
             "upload_id": upload_record["id"],
             "selected_sheet": sheet_name,
             "subject_column": subject_column,
-            "measurement_columns": measurement_columns,
-            "primary_x_column": primary_x_column,
-            "primary_y_column": primary_y_column,
+            "measurement_columns": resolved_measurement_columns,
+            "primary_x_column": resolved_primary_x_column,
+            "primary_y_column": resolved_primary_y_column,
             "selected_pair_keys": [pair_result["pair_key"] for pair_result in pair_results],
             "selected_pair_labels": [pair_result["pair_label"] for pair_result in pair_results],
+            "pair_selections": [
+                {
+                    "pair_label": pair_result["pair_label"],
+                    "primary_x_column": pair_result["primary_x_column"],
+                    "primary_y_column": pair_result["primary_y_column"],
+                }
+                for pair_result in pair_results
+            ],
             "study_design": study_design,
             "agreement_definition": agreement_definition,
             "measurement_unit": measurement_unit,
@@ -1902,6 +1974,36 @@ def build_plot_response(analysis_record: dict, pair_key: str, plot_kind: str, fi
     return send_file(buffer, mimetype=mimetype, as_attachment=download, download_name=download_name)
 
 
+def default_form_pair_selections(sheet_meta: dict | None, analysis_record: dict | None = None) -> list[dict]:
+    if analysis_record:
+        saved_pair_selections = analysis_record.get("config", {}).get("pair_selections", [])
+        if saved_pair_selections:
+            return saved_pair_selections
+
+    numeric_columns = sheet_meta["numeric_columns"] if sheet_meta else []
+    detected_pairs = sheet_meta.get("detected_pairs", []) if sheet_meta else []
+    if detected_pairs:
+        return [
+            {
+                "pair_label": pair["label"],
+                "primary_x_column": pair["test_1"],
+                "primary_y_column": pair["test_2"],
+            }
+            for pair in detected_pairs[: min(3, len(detected_pairs))]
+        ]
+
+    if len(numeric_columns) >= 2:
+        return [
+            {
+                "pair_label": f"{numeric_columns[0]} vs {numeric_columns[1]}",
+                "primary_x_column": numeric_columns[0],
+                "primary_y_column": numeric_columns[1],
+            }
+        ]
+
+    return []
+
+
 def default_form_state(sheet_meta: dict | None, analysis_record: dict | None = None) -> dict:
     all_columns = sheet_meta["columns"] if sheet_meta else []
     numeric_columns = sheet_meta["numeric_columns"] if sheet_meta else []
@@ -1912,6 +2014,7 @@ def default_form_state(sheet_meta: dict | None, analysis_record: dict | None = N
         if default_pair
         else numeric_columns[:2]
     )
+    pair_selections = default_form_pair_selections(sheet_meta, analysis_record)
 
     form_state = {
         "subject_column": "",
@@ -1919,6 +2022,7 @@ def default_form_state(sheet_meta: dict | None, analysis_record: dict | None = N
         "primary_x_column": default_measurements[0] if len(default_measurements) >= 1 else "",
         "primary_y_column": default_measurements[1] if len(default_measurements) >= 2 else "",
         "selected_pair_keys": [default_pair["key"]] if default_pair else [],
+        "pair_selections": pair_selections,
         "study_design": "two_way_random",
         "agreement_definition": "absolute",
         "measurement_unit": "single",
@@ -1939,6 +2043,7 @@ def default_form_state(sheet_meta: dict | None, analysis_record: dict | None = N
                 "primary_x_column": config.get("primary_x_column", ""),
                 "primary_y_column": config.get("primary_y_column", ""),
                 "selected_pair_keys": config.get("selected_pair_keys", form_state["selected_pair_keys"]),
+                "pair_selections": config.get("pair_selections", pair_selections),
                 "study_design": config.get("study_design", "two_way_random"),
                 "agreement_definition": config.get("agreement_definition", "absolute"),
                 "measurement_unit": config.get("measurement_unit", "single"),
@@ -1952,23 +2057,56 @@ def default_form_state(sheet_meta: dict | None, analysis_record: dict | None = N
 
 
 def form_state_from_request(sheet_meta: dict) -> dict:
-    selected_pair_keys = request.form.getlist("selected_pair_keys")
-    measurement_columns = request.form.getlist("measurement_columns")
-    selected_pairs = [pair for pair_key in selected_pair_keys if (pair := find_pair_by_key(sheet_meta, pair_key)) is not None]
+    pair_labels = request.form.getlist("pair_label")
+    pair_x_columns = request.form.getlist("pair_x_column")
+    pair_y_columns = request.form.getlist("pair_y_column")
+    pair_selections = [
+        {
+            "pair_label": pair_label,
+            "primary_x_column": pair_x_column,
+            "primary_y_column": pair_y_column,
+        }
+        for pair_label, pair_x_column, pair_y_column in zip(pair_labels, pair_x_columns, pair_y_columns)
+    ]
 
-    if selected_pairs:
+    explicit_pair_definitions = build_explicit_pair_definitions(pair_selections, sheet_meta.get("numeric_columns", []))
+    if explicit_pair_definitions:
         measurement_columns = list(
             dict.fromkeys(
                 column
-                for pair in selected_pairs
-                for column in (pair["test_1"], pair["test_2"])
+                for pair_definition in explicit_pair_definitions
+                for column in pair_definition["measurement_columns"]
             )
         )
-        primary_x_column = selected_pairs[0]["test_1"]
-        primary_y_column = selected_pairs[0]["test_2"]
+        primary_x_column = explicit_pair_definitions[0]["primary_x_column"]
+        primary_y_column = explicit_pair_definitions[0]["primary_y_column"]
+        selected_pair_keys = []
     else:
-        primary_x_column = request.form.get("primary_x_column", "")
-        primary_y_column = request.form.get("primary_y_column", "")
+        selected_pair_keys = request.form.getlist("selected_pair_keys")
+        measurement_columns = request.form.getlist("measurement_columns")
+        selected_pairs = [pair for pair_key in selected_pair_keys if (pair := find_pair_by_key(sheet_meta, pair_key)) is not None]
+
+        if selected_pairs:
+            measurement_columns = list(
+                dict.fromkeys(
+                    column
+                    for pair in selected_pairs
+                    for column in (pair["test_1"], pair["test_2"])
+                )
+            )
+            primary_x_column = selected_pairs[0]["test_1"]
+            primary_y_column = selected_pairs[0]["test_2"]
+            pair_selections = [
+                {
+                    "pair_label": pair["label"],
+                    "primary_x_column": pair["test_1"],
+                    "primary_y_column": pair["test_2"],
+                }
+                for pair in selected_pairs
+            ]
+        else:
+            primary_x_column = request.form.get("primary_x_column", "")
+            primary_y_column = request.form.get("primary_y_column", "")
 
     return {
         "subject_column": request.form.get("subject_column", ""),
@@ -1976,6 +2114,7 @@ def form_state_from_request(sheet_meta: dict) -> dict:
         "primary_x_column": primary_x_column,
         "primary_y_column": primary_y_column,
         "selected_pair_keys": selected_pair_keys,
+        "pair_selections": pair_selections,
         "study_design": request.form.get("study_design", "two_way_random"),
         "agreement_definition": request.form.get("agreement_definition", "absolute"),
         "measurement_unit": request.form.get("measurement_unit", "single"),
@@ -2033,6 +2172,7 @@ def index() -> str:
                         measurement_unit=form_state["measurement_unit"],
                         figure_palette=form_state["figure_palette"],
                         figure_action=form_state["figure_action"],
+                        pair_selections=form_state["pair_selections"],
                     )
                     analysis_id = save_analysis_record(analysis_result)
                     return redirect(
