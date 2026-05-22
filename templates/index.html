@@ -178,7 +178,7 @@
             <p class="eyebrow">Analysis setup</p>
             <h2>Select columns and confirm the design</h2>
           </div>
-          <p class="subtle">This build focuses on wide-format data with one numeric column per rater or occasion.</p>
+          <p class="subtle">Choose whether this worksheet should be treated as wide or long format, then confirm the columns to analyse.</p>
         </div>
 
         <form method="post" class="analysis-form">
@@ -198,7 +198,7 @@
             <label>
               <span class="field-label">Observation ID column
                 <span class="tooltip" tabindex="0" aria-label="Observation ID column help">
-                  <span class="tooltip-trigger">?</span>
+                  <div class="field-grid">
                   <span class="tooltip-content">
                     Choose the column that names each person, item, or case in your dataset. This helps the app keep repeated measurements grouped to the correct row. If your file does not have a clear ID column, you can leave this as generated row labels.
                   </span>
@@ -207,141 +207,262 @@
               <select name="subject_column">
                 <option value="" {% if not form_state.subject_column %}selected{% endif %}>Use generated row labels</option>
                 {% for column in form_state.available_columns %}
+
+                    <fieldset>
+                      <legend class="field-label">Detected data layout</legend>
+                      <p class="subtle">
+                        {% if form_state.structure_detection.format == 'long' %}
+                        Long format detected.
+                        {% elif form_state.structure_detection.format == 'wide' %}
+                        Wide format detected.
+                        {% else %}
+                        Data layout is uncertain.
+                        {% endif %}
+                      </p>
+                      {% if form_state.structure_detection.reasons %}
+                      <div class="pill-list">
+                        {% for reason in form_state.structure_detection.reasons %}
+                        <span class="pill">{{ reason }}</span>
+                        {% endfor %}
+                      </div>
+                      {% endif %}
+                      <div class="radio-row top-gap">
+                        <label><input type="radio" name="data_format" value="wide" {% if form_state.data_format == 'wide' %}checked{% endif %} /> Wide format</label>
+                        <label><input type="radio" name="data_format" value="long" {% if form_state.data_format == 'long' %}checked{% endif %} /> Long format</label>
+                      </div>
+                    </fieldset>
+                  </div>
                 <option value="{{ column }}" {% if column == form_state.subject_column %}selected{% endif %}>{{ column }}</option>
-                {% endfor %}
-              </select>
-            </label>
-          </div>
+                  <div id="wide-format-fields" {% if form_state.data_format != 'wide' %}hidden{% endif %}>
+                    <div class="field-grid">
+                      <label>
+                        <span class="field-label">Observation ID column
+                          <span class="tooltip" tabindex="0" aria-label="Observation ID column help">
+                            <span class="tooltip-trigger">?</span>
+                            <span class="tooltip-content">
+                              Choose the column that names each person, item, or case in your dataset. This helps the app keep repeated measurements grouped to the correct row. If your file does not have a clear ID column, you can leave this as generated row labels.
+                            </span>
+                          </span>
+                        </span>
+                        <select name="subject_column">
+                          <option value="" {% if not form_state.subject_column %}selected{% endif %}>Use generated row labels</option>
+                          {% for column in form_state.available_columns %}
+                          <option value="{{ column }}" {% if column == form_state.subject_column %}selected{% endif %}>{{ column }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                    </div>
 
-          <fieldset>
-            <legend class="field-label">Available measurement columns
-              <span class="tooltip" tabindex="0" aria-label="Measurement columns help">
-                <span class="tooltip-trigger">?</span>
-                <span class="tooltip-content">
-                  These are the numeric column headers available for reliability analysis. Review them here, then build the exact X and Y pairs you want to compare below.
-                </span>
-              </span>
-            </legend>
-            <div class="pill-list">
-              {% for column in form_state.numeric_columns %}
+                    <fieldset>
+                      <legend class="field-label">Available measurement columns
+                        <span class="tooltip" tabindex="0" aria-label="Measurement columns help">
+                          <span class="tooltip-trigger">?</span>
+                          <span class="tooltip-content">
+                            These are the numeric column headers available for reliability analysis. Review them here, then build the exact X and Y pairs you want to compare below.
+                          </span>
+                        </span>
+                      </legend>
+                      <div class="pill-list">
+                        {% for column in form_state.numeric_columns %}
+                        <span class="pill">{{ column }}</span>
+                        {% endfor %}
+                      </div>
+                    </fieldset>
+
+                    <fieldset>
+                      <legend class="field-label">Suggested column pairs
+                        <span class="tooltip" tabindex="0" aria-label="Suggested column pairs help">
+                          <span class="tooltip-trigger">?</span>
+                          <span class="tooltip-content">
+                            These are automatic suggestions based on column names such as Test 1 and Test 2. Use them as quick starting points, then review the exact pairs you want to analyse below.
+                          </span>
+                        </span>
+                      </legend>
+                      {% if form_state.detected_pairs %}
+                      <div class="suggestion-grid" id="suggested-pair-grid">
+                        {% for pair in form_state.detected_pairs %}
+                        <button
+                          type="button"
+                          class="pair-card suggestion-button"
+                          data-pair-label="{{ pair.label }}"
+                          data-pair-x="{{ pair.test_1 }}"
+                          data-pair-y="{{ pair.test_2 }}"
+                        >
+                          <span class="pair-title">{{ pair.label }}</span>
+                          <span class="pair-meta">{{ pair.test_1 }} ↔ {{ pair.test_2 }}</span>
+                        </button>
+                        {% endfor %}
+                      </div>
+                      <p class="subtle">Click a suggested pair to add it to the analysis list.</p>
+                      {% else %}
+                      <p class="subtle">No automatic Test 1/Test 2 suggestions were detected in this worksheet.</p>
+                      {% endif %}
+                    </fieldset>
+
+                    <fieldset>
+                      <legend class="field-label">Pairs to analyse
+                        <span class="tooltip" tabindex="0" aria-label="Pairs to analyse help">
+                          <span class="tooltip-trigger">?</span>
+                          <span class="tooltip-content">
+                            Choose the exact X and Y column headers for each comparison you want to run. Each row below becomes a separate reliability analysis with its own plots and results.
+                          </span>
+                        </span>
+                      </legend>
+                      <div id="pair-builder" class="pair-builder">
+                        {% for pair_selection in form_state.pair_selections %}
+                        <div class="pair-row" data-pair-row>
+                          <label>
+                            <span>Pair label</span>
+                            <input type="text" name="pair_label" value="{{ pair_selection.pair_label }}" placeholder="Optional short name" />
+                          </label>
+                          <label>
+                            <span>X column</span>
+                            <select name="pair_x_column">
+                              {% for column in form_state.numeric_columns %}
+                              <option value="{{ column }}" {% if column == pair_selection.primary_x_column %}selected{% endif %}>{{ column }}</option>
+                              {% endfor %}
+                            </select>
+                          </label>
+                          <label>
+                            <span>Y column</span>
+                            <select name="pair_y_column">
+                              {% for column in form_state.numeric_columns %}
+                              <option value="{{ column }}" {% if column == pair_selection.primary_y_column %}selected{% endif %}>{{ column }}</option>
+                              {% endfor %}
+                            </select>
+                          </label>
+                          <div class="pair-row-actions">
+                            <button type="button" class="secondary remove-pair-button" data-remove-pair>Remove</button>
+                          </div>
+                        </div>
+                        {% endfor %}
+                      </div>
+                      <div class="pair-builder-toolbar">
+                        <button type="button" class="secondary" id="add-pair-button">Add another pair</button>
+                      </div>
+                      <p class="subtle">The first pair in this list will be shown first in the results. You can add or remove rows before running the analysis.</p>
+                    </fieldset>
+
+                    <template id="pair-row-template">
+                      <div class="pair-row" data-pair-row>
+                        <label>
+                          <span>Pair label</span>
+                          <input type="text" name="pair_label" value="" placeholder="Optional short name" />
+                        </label>
+                        <label>
+                          <span>X column</span>
+                          <select name="pair_x_column">
+                            {% for column in form_state.numeric_columns %}
+                            <option value="{{ column }}" {% if loop.first %}selected{% endif %}>{{ column }}</option>
+                            {% endfor %}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Y column</span>
+                          <select name="pair_y_column">
+                            {% for column in form_state.numeric_columns %}
+                            <option value="{{ column }}" {% if loop.index == 2 or (loop.first and form_state.numeric_columns|length == 1) %}selected{% endif %}>{{ column }}</option>
+                            {% endfor %}
+                          </select>
+                        </label>
+                        <div class="pair-row-actions">
+                          <button type="button" class="secondary remove-pair-button" data-remove-pair>Remove</button>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
               <span class="pill">{{ column }}</span>
-              {% endfor %}
-            </div>
-          </fieldset>
+                  <div id="long-format-fields" {% if form_state.data_format != 'long' %}hidden{% endif %}>
+                    <div class="field-grid">
+                      <label>
+                        <span class="field-label">Observation ID column
+                          <span class="tooltip" tabindex="0" aria-label="Long-format observation ID help">
+                            <span class="tooltip-trigger">?</span>
+                            <span class="tooltip-content">
+                              Choose the column that identifies each person, item, or case across repeated rows in the long-format data.
+                            </span>
+                          </span>
+                        </span>
+                        <select name="long_subject_column">
+                          {% for column in form_state.available_columns %}
+                          <option value="{{ column }}" {% if column == form_state.long_subject_column %}selected{% endif %}>{{ column }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                      <label>
+                        <span class="field-label">Measurement name column</span>
+                        <select name="long_measurement_column">
+                          {% for column in form_state.available_columns %}
+                          <option value="{{ column }}" {% if column == form_state.long_measurement_column %}selected{% endif %}>{{ column }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                      <label>
+                        <span class="field-label">Repeated-measure level column</span>
+                        <select name="long_rater_column">
+                          {% for column in form_state.available_columns %}
+                          <option value="{{ column }}" {% if column == form_state.long_rater_column %}selected{% endif %}>{{ column }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                    </div>
 
-          <fieldset>
-            <legend class="field-label">Suggested column pairs
-              <span class="tooltip" tabindex="0" aria-label="Suggested column pairs help">
-                <span class="tooltip-trigger">?</span>
-                <span class="tooltip-content">
-                  These are automatic suggestions based on column names such as Test 1 and Test 2. Use them as quick starting points, then review the exact pairs you want to analyse below.
-                </span>
-              </span>
-            </legend>
-            {% if form_state.detected_pairs %}
-            <div class="suggestion-grid" id="suggested-pair-grid">
-              {% for pair in form_state.detected_pairs %}
-              <button
-                type="button"
-                class="pair-card suggestion-button"
-                data-pair-label="{{ pair.label }}"
-                data-pair-x="{{ pair.test_1 }}"
-                data-pair-y="{{ pair.test_2 }}"
-              >
-                <span class="pair-title">{{ pair.label }}</span>
-                <span class="pair-meta">{{ pair.test_1 }} ↔ {{ pair.test_2 }}</span>
-              </button>
-              {% endfor %}
-            </div>
-            <p class="subtle">Click a suggested pair to add it to the analysis list.</p>
-            {% else %}
-            <p class="subtle">No automatic Test 1/Test 2 suggestions were detected in this worksheet.</p>
-            {% endif %}
-          </fieldset>
+                    <div class="field-grid">
+                      <label>
+                        <span class="field-label">Score column</span>
+                        <select name="long_score_column">
+                          {% for column in form_state.available_columns %}
+                          <option value="{{ column }}" {% if column == form_state.long_score_column %}selected{% endif %}>{{ column }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                      <label>
+                        <span class="field-label">Measurements to analyse
+                          <span class="tooltip" tabindex="0" aria-label="Long-format measurements help">
+                            <span class="tooltip-trigger">?</span>
+                            <span class="tooltip-content">
+                              These measurement names are canonicalised so duplicated endings such as Test 1 and Test 2 are collapsed into one measurement choice when the repeated-measure level already stores that information separately.
+                            </span>
+                          </span>
+                        </span>
+                        <select name="long_selected_measurements" multiple size="6">
+                          {% for measurement in form_state.long_measurement_options %}
+                          <option value="{{ measurement }}" {% if measurement in form_state.long_selected_measurements %}selected{% endif %}>{{ measurement }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                      <div>
+                        <span class="field-label">Available canonical measurement names</span>
+                        <div class="pill-list top-gap">
+                          {% for measurement in form_state.long_measurement_options %}
+                          <span class="pill">{{ measurement }}</span>
+                          {% endfor %}
+                          {% if not form_state.long_measurement_options %}
+                          <span class="pill muted">No measurement names detected yet for the selected columns.</span>
+                          {% endif %}
+                        </div>
+                      </div>
+                    </div>
 
-          <fieldset>
-            <legend class="field-label">Pairs to analyse
-              <span class="tooltip" tabindex="0" aria-label="Pairs to analyse help">
-                <span class="tooltip-trigger">?</span>
-                <span class="tooltip-content">
-                  Choose the exact X and Y column headers for each comparison you want to run. Each row below becomes a separate reliability analysis with its own plots and results.
-                </span>
-              </span>
-            </legend>
-            <div id="pair-builder" class="pair-builder">
-              {% for pair_selection in form_state.pair_selections %}
-              <div class="pair-row" data-pair-row>
-                <label>
-                  <span>Pair label</span>
-                  <input type="text" name="pair_label" value="{{ pair_selection.pair_label }}" placeholder="Optional short name" />
-                </label>
-                <label>
-                  <span>X column</span>
-                  <select name="pair_x_column">
-                    {% for column in form_state.numeric_columns %}
-                    <option value="{{ column }}" {% if column == pair_selection.primary_x_column %}selected{% endif %}>{{ column }}</option>
-                    {% endfor %}
-                  </select>
-                </label>
-                <label>
-                  <span>Y column</span>
-                  <select name="pair_y_column">
-                    {% for column in form_state.numeric_columns %}
-                    <option value="{{ column }}" {% if column == pair_selection.primary_y_column %}selected{% endif %}>{{ column }}</option>
-                    {% endfor %}
-                  </select>
-                </label>
-                <div class="pair-row-actions">
-                  <button type="button" class="secondary remove-pair-button" data-remove-pair>Remove</button>
-                </div>
-              </div>
-              {% endfor %}
-            </div>
-            <div class="pair-builder-toolbar">
-              <button type="button" class="secondary" id="add-pair-button">Add another pair</button>
-            </div>
-            <p class="subtle">The first pair in this list will be shown first in the results. You can add or remove rows before running the analysis.</p>
-          </fieldset>
-
-          <template id="pair-row-template">
-            <div class="pair-row" data-pair-row>
-              <label>
-                <span>Pair label</span>
-                <input type="text" name="pair_label" value="" placeholder="Optional short name" />
-              </label>
-              <label>
-                <span>X column</span>
-                <select name="pair_x_column">
-                  {% for column in form_state.numeric_columns %}
-                  <option value="{{ column }}" {% if loop.first %}selected{% endif %}>{{ column }}</option>
-                  {% endfor %}
-                </select>
-              </label>
-              <label>
-                <span>Y column</span>
-                <select name="pair_y_column">
-                  {% for column in form_state.numeric_columns %}
-                  <option value="{{ column }}" {% if loop.index == 2 or (loop.first and form_state.numeric_columns|length == 1) %}selected{% endif %}>{{ column }}</option>
-                  {% endfor %}
-                </select>
-              </label>
-              <div class="pair-row-actions">
-                <button type="button" class="secondary remove-pair-button" data-remove-pair>Remove</button>
-              </div>
-            </div>
-          </template>
-
-          <div class="field-grid three-up">
-            <label>
-              <span class="field-label">Study design
-                <span class="tooltip" tabindex="0" aria-label="Study design help">
-                  <span class="tooltip-trigger">?</span>
-                  <span class="tooltip-content">
-                    Choose how the repeated measurements were collected.<br />
-                    <strong>One-way random</strong>: use when different people, devices, or occasions may have measured different subjects.<br />
-                    <strong>Two-way random</strong>: use when the same people, devices, or occasions measured everyone and you want the result to apply more broadly.<br />
-                    <strong>Two-way mixed</strong>: use when the same specific people or devices measured everyone and you only care about those exact measurers.
-                  </span>
+                    <div class="field-grid">
+                      <label>
+                        <span class="field-label">First repeated-measure level</span>
+                        <select name="long_x_rater_value">
+                          {% for value in form_state.long_rater_values %}
+                          <option value="{{ value }}" {% if value == form_state.long_x_rater_value %}selected{% endif %}>{{ value }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                      <label>
+                        <span class="field-label">Second repeated-measure level</span>
+                        <select name="long_y_rater_value">
+                          {% for value in form_state.long_rater_values %}
+                          <option value="{{ value }}" {% if value == form_state.long_y_rater_value %}selected{% endif %}>{{ value }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                    </div>
+                  </div>
                 </span>
               </span>
               <select name="study_design">
@@ -738,6 +859,9 @@
         const pairRowTemplate = document.getElementById("pair-row-template");
         const addPairButton = document.getElementById("add-pair-button");
         const suggestionGrid = document.getElementById("suggested-pair-grid");
+        const layoutInputs = Array.from(document.querySelectorAll('input[name="data_format"]'));
+        const wideFields = document.getElementById("wide-format-fields");
+        const longFields = document.getElementById("long-format-fields");
 
         const updatePreview = () => {
           if (!paletteSelect || !scatterPreview || !blandPreview) {
@@ -793,6 +917,16 @@
           updateRemoveButtons();
         };
 
+        const updateLayoutSections = () => {
+          if (!wideFields || !longFields || !layoutInputs.length) {
+            return;
+          }
+
+          const selectedLayout = layoutInputs.find((input) => input.checked)?.value || "wide";
+          wideFields.hidden = selectedLayout !== "wide";
+          longFields.hidden = selectedLayout !== "long";
+        };
+
         if (paletteSelect && scatterPreview && blandPreview) {
           paletteSelect.addEventListener("change", updatePreview);
         }
@@ -840,7 +974,12 @@
           });
         }
 
+        layoutInputs.forEach((input) => {
+          input.addEventListener("change", updateLayoutSections);
+        });
+
         updateRemoveButtons();
+        updateLayoutSections();
       }());
     </script>
   </body>

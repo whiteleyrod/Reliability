@@ -73,6 +73,7 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 ANALYSIS_DIR = DATA_DIR / "analyses"
 ALLOWED_EXTENSIONS = {"csv", "xlsx"}
 PAIR_PATTERN = re.compile(r"^(?P<label>.+?)\s+Test\s+(?P<test>[12])(?:\.\d+)?\s*$", re.IGNORECASE)
+LONG_LEVEL_PREFIXES = ("test", "round", "session", "trial", "occasion", "visit", "repeat")
 DOCX_XML_NAMESPACES = {
     "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
     "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
@@ -436,6 +437,71 @@ def detect_dataset_structure(dataframe: pd.DataFrame) -> dict:
             },
         },
     }
+
+
+def long_level_aliases(level_value: object) -> list[str]:
+    raw_text = re.sub(r"\s+", " ", str(level_value)).strip()
+    if not raw_text:
+        return []
+
+    aliases: list[str] = []
+
+    def add_alias(value: str) -> None:
+        folded = value.casefold()
+        if folded and folded not in aliases:
+            aliases.append(folded)
+
+    add_alias(raw_text)
+
+    numeric_match = re.fullmatch(r"([+-]?\d+)(?:\.0+)?", raw_text)
+    if numeric_match:
+        numeric_text = numeric_match.group(1)
+        add_alias(numeric_text)
+        for prefix in LONG_LEVEL_PREFIXES:
+            add_alias(f"{prefix} {numeric_text}")
+
+    return aliases
+
+
+def canonicalize_long_measurement_value(measurement_value: object, repeated_levels: list[object]) -> str:
+    text = re.sub(r"\s+", " ", str(measurement_value)).strip()
+    if not text:
+        return ""
+
+    aliases = {
+        alias
+        for repeated_level in repeated_levels
+        for alias in long_level_aliases(repeated_level)
+    }
+    for alias in sorted(aliases, key=len, reverse=True):
+        match = re.match(rf"^(.*?)(?:[\s_\-:/]+)?{re.escape(alias)}$", text, flags=re.IGNORECASE)
+        if not match:
+            continue
+
+        base_text = re.sub(r"[\s_\-:/]+$", "", match.group(1)).strip()
+        if base_text:
+            return base_text
+
+    return text
+
+
+def build_long_measurement_options(dataframe: pd.DataFrame, measurement_column: str, rater_column: str) -> list[str]:
+    if measurement_column not in dataframe.columns:
+        return []
+
+    repeated_levels = []
+    if rater_column in dataframe.columns:
+        repeated_levels = dataframe[rater_column].dropna().astype(str).tolist()
+
+    options: list[str] = []
+    seen: set[str] = set()
+    for value in dataframe[measurement_column].dropna().tolist():
+        canonical_value = canonicalize_long_measurement_value(value, repeated_levels)
+        if canonical_value and canonical_value not in seen:
+            seen.add(canonical_value)
+            options.append(canonical_value)
+
+    return sorted(options)
 
 
 def scan_sheet(name: str, dataframe: pd.DataFrame) -> dict:
@@ -1151,8 +1217,13 @@ def prepare_long_pair_frame(
     x_rater_value: str,
     y_rater_value: str,
 ) -> pd.DataFrame:
+    available_repeated_levels = dataframe[rater_column].dropna().astype(str).unique().tolist()
+    canonical_measurement_value = canonicalize_long_measurement_value(measurement_value, available_repeated_levels)
+    canonical_measurements = dataframe[measurement_column].map(
+        lambda value: canonicalize_long_measurement_value(value, available_repeated_levels)
+    )
     filtered = dataframe.loc[
-        dataframe[measurement_column].astype(str) == str(measurement_value),
+        canonical_measurements == canonical_measurement_value,
         [subject_column, rater_column, score_column],
     ].copy()
 
@@ -1214,16 +1285,23 @@ def analyse_long_dataset(
     if not x_rater_value or not y_rater_value or str(x_rater_value) == str(y_rater_value):
         raise AnalysisError("Choose two different repeated-measure levels for the long-format comparison.")
 
-    available_measurements = [str(value) for value in dataframe[measurement_column].dropna().astype(str).unique().tolist()]
+    available_repeated_levels = dataframe[rater_column].dropna().astype(str).unique().tolist()
+    available_measurements = build_long_measurement_options(dataframe, measurement_column, rater_column)
     if not selected_measurements:
         raise AnalysisError("Select at least one measurement to analyse from the long-format data.")
 
-    invalid_measurements = [value for value in selected_measurements if str(value) not in available_measurements]
+    normalized_selected_measurements: list[str] = []
+    for value in selected_measurements:
+        canonical_value = canonicalize_long_measurement_value(value, available_repeated_levels)
+        if canonical_value and canonical_value not in normalized_selected_measurements:
+            normalized_selected_measurements.append(canonical_value)
+
+    invalid_measurements = [value for value in normalized_selected_measurements if value not in available_measurements]
     if invalid_measurements:
         raise AnalysisError(f"The selected measurements were not found in the dataset: {', '.join(invalid_measurements)}.")
 
     pair_results: list[dict] = []
-    for measurement_value in selected_measurements:
+    for measurement_value in normalized_selected_measurements:
         wide_frame = prepare_long_pair_frame(
             dataframe,
             subject_column,
@@ -1281,7 +1359,7 @@ def analyse_long_dataset(
             "long_measurement_column": measurement_column,
             "long_rater_column": rater_column,
             "long_score_column": score_column,
-            "long_selected_measurements": [str(value) for value in selected_measurements],
+            "long_selected_measurements": normalized_selected_measurements,
             "long_x_rater_value": str(x_rater_value),
             "long_y_rater_value": str(y_rater_value),
         },
@@ -2388,10 +2466,116 @@ def default_form_pair_selections(sheet_meta: dict | None, analysis_record: dict 
     return []
 
 
-def default_form_state(sheet_meta: dict | None, analysis_record: dict | None = None) -> dict:
+def build_long_form_state(
+    sheet_meta: dict | None,
+    preview_frame: pd.DataFrame | None,
+    config: dict | None = None,
+) -> dict:
+    all_columns = sheet_meta["columns"] if sheet_meta else []
+    numeric_columns = sheet_meta["numeric_columns"] if sheet_meta else []
+    structure_detection = sheet_meta.get("structure_detection", {}) if sheet_meta else {}
+    suggested_long = structure_detection.get("suggested_columns", {}).get("long", {})
+    saved_long = config if config and config.get("data_format") == "long" else {}
+
+    long_subject_column = (
+        saved_long.get("subject_column")
+        or suggested_long.get("subject_column")
+        or (all_columns[0] if all_columns else "")
+    )
+    long_measurement_column = (
+        saved_long.get("long_measurement_column")
+        or suggested_long.get("measurement_column")
+        or (all_columns[1] if len(all_columns) > 1 else (all_columns[0] if all_columns else ""))
+    )
+    long_rater_column = (
+        saved_long.get("long_rater_column")
+        or suggested_long.get("rater_column")
+        or (all_columns[2] if len(all_columns) > 2 else (all_columns[0] if all_columns else ""))
+    )
+    long_score_column = (
+        saved_long.get("long_score_column")
+        or suggested_long.get("score_column")
+        or (numeric_columns[-1] if numeric_columns else "")
+    )
+
+    long_measurement_options: list[str] = []
+    long_rater_values: list[str] = []
+    if preview_frame is not None:
+        candidate_rater_columns = [
+            column
+            for column in all_columns
+            if column not in {long_subject_column, long_measurement_column, long_score_column}
+        ]
+        best_rater_column = long_rater_column
+        best_measurement_options = build_long_measurement_options(
+            preview_frame,
+            long_measurement_column,
+            long_rater_column,
+        )
+
+        for candidate_column in candidate_rater_columns:
+            if candidate_column not in preview_frame.columns:
+                continue
+
+            unique_count = preview_frame[candidate_column].dropna().astype(str).nunique()
+            if unique_count < 2 or unique_count > min(12, max(2, len(preview_frame))):
+                continue
+
+            candidate_options = build_long_measurement_options(
+                preview_frame,
+                long_measurement_column,
+                candidate_column,
+            )
+            if candidate_options and (
+                not best_measurement_options or len(candidate_options) < len(best_measurement_options)
+            ):
+                best_rater_column = candidate_column
+                best_measurement_options = candidate_options
+
+        long_rater_column = best_rater_column
+        long_measurement_options = build_long_measurement_options(
+            preview_frame,
+            long_measurement_column,
+            long_rater_column,
+        )
+        if long_rater_column in preview_frame.columns:
+            long_rater_values = sorted(preview_frame[long_rater_column].dropna().astype(str).unique().tolist())
+
+    long_selected_measurements = [
+        value
+        for value in saved_long.get("long_selected_measurements", [])
+        if value in long_measurement_options
+    ]
+    if not long_selected_measurements:
+        long_selected_measurements = long_measurement_options[: min(3, len(long_measurement_options))]
+
+    long_x_rater_value = saved_long.get("long_x_rater_value") or (long_rater_values[0] if long_rater_values else "")
+    long_y_rater_value = saved_long.get("long_y_rater_value") or (
+        long_rater_values[min(1, len(long_rater_values) - 1)] if long_rater_values else ""
+    )
+
+    return {
+        "long_subject_column": long_subject_column,
+        "long_measurement_column": long_measurement_column,
+        "long_rater_column": long_rater_column,
+        "long_score_column": long_score_column,
+        "long_measurement_options": long_measurement_options,
+        "long_selected_measurements": long_selected_measurements,
+        "long_rater_values": long_rater_values,
+        "long_x_rater_value": long_x_rater_value,
+        "long_y_rater_value": long_y_rater_value,
+    }
+
+
+def default_form_state(
+    sheet_meta: dict | None,
+    analysis_record: dict | None = None,
+    preview_frame: pd.DataFrame | None = None,
+) -> dict:
     all_columns = sheet_meta["columns"] if sheet_meta else []
     numeric_columns = sheet_meta["numeric_columns"] if sheet_meta else []
     detected_pairs = sheet_meta.get("detected_pairs", []) if sheet_meta else []
+    structure_detection = sheet_meta.get("structure_detection", {}) if sheet_meta else {}
     default_pair = detected_pairs[0] if detected_pairs else None
     default_measurements = (
         [default_pair["test_1"], default_pair["test_2"]]
@@ -2399,8 +2583,15 @@ def default_form_state(sheet_meta: dict | None, analysis_record: dict | None = N
         else numeric_columns[:2]
     )
     pair_selections = default_form_pair_selections(sheet_meta, analysis_record)
+    config = analysis_record["config"] if analysis_record else {}
+    selected_data_format = config.get("data_format") if analysis_record else None
+    if not selected_data_format:
+        selected_data_format = "long" if structure_detection.get("format") == "long" else "wide"
+    long_form_state = build_long_form_state(sheet_meta, preview_frame, config)
 
     form_state = {
+        "data_format": selected_data_format,
+        "structure_detection": structure_detection,
         "subject_column": "",
         "measurement_columns": default_measurements,
         "primary_x_column": default_measurements[0] if len(default_measurements) >= 1 else "",
@@ -2416,10 +2607,10 @@ def default_form_state(sheet_meta: dict | None, analysis_record: dict | None = N
         "available_columns": all_columns,
         "numeric_columns": numeric_columns,
         "detected_pairs": detected_pairs,
+        **long_form_state,
     }
 
     if analysis_record:
-        config = analysis_record["config"]
         form_state.update(
             {
                 "subject_column": config.get("subject_column") or "",
@@ -2434,13 +2625,52 @@ def default_form_state(sheet_meta: dict | None, analysis_record: dict | None = N
                 "figure_palette": config.get("figure_palette", DEFAULT_FIGURE_PALETTE),
                 "figure_action": config.get("figure_action", "both"),
                 "sheet_name": config.get("selected_sheet", form_state["sheet_name"]),
+                "data_format": config.get("data_format", form_state["data_format"]),
             }
         )
+        form_state.update(build_long_form_state(sheet_meta, preview_frame, config))
 
     return form_state
 
 
-def form_state_from_request(sheet_meta: dict) -> dict:
+def form_state_from_request(sheet_meta: dict, preview_frame: pd.DataFrame | None = None) -> dict:
+    defaults = default_form_state(sheet_meta, None, preview_frame)
+    data_format = request.form.get("data_format", defaults["data_format"])
+    if data_format == "long":
+        long_measurement_column = request.form.get("long_measurement_column", defaults["long_measurement_column"])
+        long_rater_column = request.form.get("long_rater_column", defaults["long_rater_column"])
+        long_measurement_options = build_long_measurement_options(preview_frame, long_measurement_column, long_rater_column) if preview_frame is not None else []
+        long_rater_values = (
+            sorted(preview_frame[long_rater_column].dropna().astype(str).unique().tolist())
+            if preview_frame is not None and long_rater_column in preview_frame.columns
+            else []
+        )
+        long_selected_measurements = request.form.getlist("long_selected_measurements")
+        if not long_selected_measurements:
+            long_selected_measurements = defaults["long_selected_measurements"]
+
+        form_state = {
+            **defaults,
+            "data_format": "long",
+            "subject_column": request.form.get("long_subject_column", defaults["long_subject_column"]),
+            "long_subject_column": request.form.get("long_subject_column", defaults["long_subject_column"]),
+            "long_measurement_column": long_measurement_column,
+            "long_rater_column": long_rater_column,
+            "long_score_column": request.form.get("long_score_column", defaults["long_score_column"]),
+            "long_measurement_options": long_measurement_options,
+            "long_selected_measurements": long_selected_measurements,
+            "long_rater_values": long_rater_values,
+            "long_x_rater_value": request.form.get("long_x_rater_value", defaults["long_x_rater_value"]),
+            "long_y_rater_value": request.form.get("long_y_rater_value", defaults["long_y_rater_value"]),
+            "study_design": request.form.get("study_design", "two_way_random"),
+            "agreement_definition": request.form.get("agreement_definition", "absolute"),
+            "measurement_unit": request.form.get("measurement_unit", "single"),
+            "figure_palette": request.form.get("figure_palette", DEFAULT_FIGURE_PALETTE),
+            "figure_action": request.form.get("figure_action", "both"),
+            "sheet_name": request.form.get("sheet_name", sheet_meta["name"]),
+        }
+        return form_state
+
     pair_labels = request.form.getlist("pair_label")
     pair_x_columns = request.form.getlist("pair_x_column")
     pair_y_columns = request.form.getlist("pair_y_column")
@@ -2493,6 +2723,8 @@ def form_state_from_request(sheet_meta: dict) -> dict:
             primary_y_column = request.form.get("primary_y_column", "")
 
     return {
+        **defaults,
+        "data_format": "wide",
         "subject_column": request.form.get("subject_column", ""),
         "measurement_columns": measurement_columns,
         "primary_x_column": primary_x_column,
@@ -2540,24 +2772,43 @@ def index() -> str:
                 requested_sheet = request.form.get("sheet_name")
                 active_sheet = get_active_sheet(upload_record, requested_sheet)
                 sheet_meta = get_sheet_meta(upload_record, active_sheet)
-                form_state = form_state_from_request(sheet_meta)
+                preview_frame = read_dataset(get_upload_path(upload_record), upload_record["file_type"], active_sheet)
+                form_state = form_state_from_request(sheet_meta, preview_frame)
 
                 try:
-                    analysis_result = analyse_wide_dataset(
-                        upload_record=upload_record,
-                        sheet_name=active_sheet,
-                        subject_column=form_state["subject_column"] or None,
-                        measurement_columns=form_state["measurement_columns"],
-                        primary_x_column=form_state["primary_x_column"],
-                        primary_y_column=form_state["primary_y_column"],
-                        selected_pair_keys=form_state["selected_pair_keys"],
-                        study_design=form_state["study_design"],
-                        agreement_definition=form_state["agreement_definition"],
-                        measurement_unit=form_state["measurement_unit"],
-                        figure_palette=form_state["figure_palette"],
-                        figure_action=form_state["figure_action"],
-                        pair_selections=form_state["pair_selections"],
-                    )
+                    if form_state["data_format"] == "long":
+                        analysis_result = analyse_long_dataset(
+                            upload_record=upload_record,
+                            sheet_name=active_sheet,
+                            subject_column=form_state["long_subject_column"],
+                            measurement_column=form_state["long_measurement_column"],
+                            rater_column=form_state["long_rater_column"],
+                            score_column=form_state["long_score_column"],
+                            selected_measurements=form_state["long_selected_measurements"],
+                            x_rater_value=form_state["long_x_rater_value"],
+                            y_rater_value=form_state["long_y_rater_value"],
+                            study_design=form_state["study_design"],
+                            agreement_definition=form_state["agreement_definition"],
+                            measurement_unit=form_state["measurement_unit"],
+                            figure_palette=form_state["figure_palette"],
+                            figure_action=form_state["figure_action"],
+                        )
+                    else:
+                        analysis_result = analyse_wide_dataset(
+                            upload_record=upload_record,
+                            sheet_name=active_sheet,
+                            subject_column=form_state["subject_column"] or None,
+                            measurement_columns=form_state["measurement_columns"],
+                            primary_x_column=form_state["primary_x_column"],
+                            primary_y_column=form_state["primary_y_column"],
+                            selected_pair_keys=form_state["selected_pair_keys"],
+                            study_design=form_state["study_design"],
+                            agreement_definition=form_state["agreement_definition"],
+                            measurement_unit=form_state["measurement_unit"],
+                            figure_palette=form_state["figure_palette"],
+                            figure_action=form_state["figure_action"],
+                            pair_selections=form_state["pair_selections"],
+                        )
                     analysis_id = save_analysis_record(analysis_result)
                     return redirect(
                         url_for(
@@ -2570,7 +2821,6 @@ def index() -> str:
                     )
                 except AnalysisError as exc:
                     error_message = str(exc)
-                    preview_frame = read_dataset(get_upload_path(upload_record), upload_record["file_type"], active_sheet)
                     return render_template(
                         "index.html",
                         error=error_message,
@@ -2607,7 +2857,7 @@ def index() -> str:
         preview_frame = read_dataset(get_upload_path(upload_record), upload_record["file_type"], selected_sheet)
         preview_columns = list(preview_frame.columns)
         preview_rows = build_preview_rows(preview_frame)
-        form_state = default_form_state(active_sheet_meta, analysis_record)
+        form_state = default_form_state(active_sheet_meta, analysis_record, preview_frame)
 
     return render_template(
         "index.html",

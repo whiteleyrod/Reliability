@@ -15,12 +15,15 @@ from app import (
     build_bland_altman_plot,
     build_explicit_pair_definitions,
     build_html_report,
+    build_long_measurement_options,
     build_markdown_report,
     build_selected_pair_definitions,
+    default_form_state,
     detect_dataset_structure,
     format_fixed_decimal,
     form_state_from_request,
     prepare_long_pair_frame,
+    scan_sheet,
     build_regression_confidence_band,
     build_scatter_plot,
     build_typical_error_table,
@@ -200,6 +203,40 @@ class ReliabilityAppTests(unittest.TestCase):
         )
         self.assertEqual(len(form_state["pair_selections"]), 2)
 
+    def test_default_form_state_uses_canonical_long_measurement_options_for_flask(self) -> None:
+        dataframe = pd.read_excel(self.SAMPLE_DATA_DIR / "All Metrics Cleaned_Smaller_Long_Messy.xlsx", sheet_name="AmbiguousLong")
+        sheet_meta = scan_sheet("AmbiguousLong", dataframe)
+
+        form_state = default_form_state(sheet_meta, None, dataframe)
+
+        self.assertIn("INV_Ankle_Power_LAND", form_state["long_measurement_options"])
+        self.assertNotIn("INV_Ankle_Power_LAND Test 1", form_state["long_measurement_options"])
+
+    def test_form_state_from_request_keeps_canonical_long_measurement_choices(self) -> None:
+        dataframe = pd.read_excel(self.SAMPLE_DATA_DIR / "All Metrics Cleaned_Smaller_Long_Messy.xlsx", sheet_name="AmbiguousLong")
+        sheet_meta = scan_sheet("AmbiguousLong", dataframe)
+
+        with app.test_request_context(
+            "/",
+            method="POST",
+            data={
+                "sheet_name": "AmbiguousLong",
+                "data_format": "long",
+                "long_subject_column": "entity_code",
+                "long_measurement_column": "label_blob",
+                "long_rater_column": "round_code",
+                "long_score_column": "obs_numeric",
+                "long_selected_measurements": ["INV_Ankle_Power_LAND"],
+                "long_x_rater_value": "1",
+                "long_y_rater_value": "2",
+            },
+        ):
+            form_state = form_state_from_request(sheet_meta, dataframe)
+
+        self.assertEqual(form_state["data_format"], "long")
+        self.assertEqual(form_state["long_selected_measurements"], ["INV_Ankle_Power_LAND"])
+        self.assertIn("INV_Ankle_Power_LAND", form_state["long_measurement_options"])
+
     def test_detect_dataset_structure_identifies_wide_sample(self) -> None:
         dataframe = pd.read_excel(self.SAMPLE_DATA_DIR / "All Metrics Cleaned_Smaller.xlsx", sheet_name="Variables")
 
@@ -244,6 +281,31 @@ class ReliabilityAppTests(unittest.TestCase):
         self.assertEqual(list(wide_frame.columns), ["observation_id", "Test 1", "Test 2"])
         self.assertEqual(len(wide_frame), 6)
 
+    def test_prepare_long_pair_frame_handles_measurement_labels_with_embedded_round_suffix(self) -> None:
+        dataframe = pd.read_excel(self.SAMPLE_DATA_DIR / "All Metrics Cleaned_Smaller_Long_Messy.xlsx", sheet_name="AmbiguousLong")
+
+        wide_frame = prepare_long_pair_frame(
+            dataframe,
+            subject_column="entity_code",
+            measurement_column="label_blob",
+            measurement_value="INV_Ankle_Power_LAND Test 1",
+            rater_column="round_code",
+            score_column="obs_numeric",
+            x_rater_value="1",
+            y_rater_value="2",
+        )
+
+        self.assertEqual(list(wide_frame.columns), ["entity_code", "1", "2"])
+        self.assertEqual(len(wide_frame), 6)
+
+    def test_build_long_measurement_options_collapses_embedded_round_suffixes(self) -> None:
+        dataframe = pd.read_excel(self.SAMPLE_DATA_DIR / "All Metrics Cleaned_Smaller_Long_Messy.xlsx", sheet_name="AmbiguousLong")
+
+        measurement_options = build_long_measurement_options(dataframe, "label_blob", "round_code")
+
+        self.assertIn("INV_Ankle_Power_LAND", measurement_options)
+        self.assertNotIn("INV_Ankle_Power_LAND Test 1", measurement_options)
+
     def test_analyse_long_dataset_returns_pair_results_per_measurement(self) -> None:
         upload_record = {
             "id": "long-upload",
@@ -272,6 +334,34 @@ class ReliabilityAppTests(unittest.TestCase):
         self.assertEqual(analysis_result["config"]["data_format"], "long")
         self.assertEqual(len(analysis_result["pair_results"]), 2)
         self.assertEqual(analysis_result["pair_results"][0]["primary_x_column"], "Test 1")
+
+    def test_analyse_long_dataset_accepts_messy_measurement_labels_with_round_suffixes(self) -> None:
+        upload_record = {
+            "id": "long-upload-messy",
+            "stored_filename": "All Metrics Cleaned_Smaller_Long_Messy.xlsx",
+            "file_type": "xlsx",
+        }
+
+        with patch("app.get_upload_path", return_value=self.SAMPLE_DATA_DIR / "All Metrics Cleaned_Smaller_Long_Messy.xlsx"):
+            analysis_result = analyse_long_dataset(
+                upload_record=upload_record,
+                sheet_name="AmbiguousLong",
+                subject_column="entity_code",
+                measurement_column="label_blob",
+                rater_column="round_code",
+                score_column="obs_numeric",
+                selected_measurements=["INV_Ankle_Power_LAND Test 1"],
+                x_rater_value="1",
+                y_rater_value="2",
+                study_design="two_way_random",
+                agreement_definition="absolute",
+                measurement_unit="single",
+                figure_palette="classic-blue",
+                figure_action="both",
+            )
+
+        self.assertEqual(analysis_result["config"]["long_selected_measurements"], ["INV_Ankle_Power_LAND"])
+        self.assertEqual(analysis_result["pair_results"][0]["pair_label"], "INV_Ankle_Power_LAND")
 
     def test_build_html_report_includes_metrics_and_figures(self) -> None:
         upload_record = {

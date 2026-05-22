@@ -15,6 +15,7 @@ from app import (
     analyse_long_dataset,
     analyse_wide_dataset,
     build_bland_altman_plot,
+    build_long_measurement_options,
     build_palette_preview_frame,
     build_docx_report,
     build_html_report,
@@ -367,12 +368,10 @@ def main() -> None:
                 key=f"long-score-{upload_record['id']}-{selected_sheet}",
             )
 
-        measurement_values = []
-        if long_measurement_column in source_preview_frame.columns:
-            measurement_values = sorted(source_preview_frame[long_measurement_column].dropna().astype(str).unique().tolist())
         rater_values = []
         if long_rater_column in source_preview_frame.columns:
             rater_values = sorted(source_preview_frame[long_rater_column].dropna().astype(str).unique().tolist())
+        measurement_values = build_long_measurement_options(source_preview_frame, long_measurement_column, long_rater_column)
 
         default_selected_measurements = []
         if analysis_record and analysis_record["config"].get("data_format") == "long":
