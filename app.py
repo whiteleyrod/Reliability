@@ -224,6 +224,220 @@ def read_dataset(file_path: Path, file_type: str, sheet_name: str | None = None)
     return normalise_dataframe(dataframe)
 
 
+def column_profile(dataframe: pd.DataFrame, column: str) -> dict:
+    series = dataframe[column]
+    non_null = series.dropna()
+    non_null_count = int(non_null.shape[0])
+    unique_count = int(non_null.nunique(dropna=True))
+    unique_ratio = unique_count / non_null_count if non_null_count else 0.0
+    return {
+        "name": str(column),
+        "is_numeric": bool(pd.api.types.is_numeric_dtype(series)),
+        "non_null_count": non_null_count,
+        "unique_count": unique_count,
+        "unique_ratio": unique_ratio,
+    }
+
+
+def name_has_hint(column_name: str, keywords: tuple[str, ...]) -> bool:
+    folded_name = str(column_name).casefold()
+    return any(keyword in folded_name for keyword in keywords)
+
+
+def detect_dataset_structure(dataframe: pd.DataFrame) -> dict:
+    row_count = int(len(dataframe))
+    column_count = int(len(dataframe.columns))
+    profiles = [column_profile(dataframe, column) for column in dataframe.columns]
+    numeric_columns = [profile["name"] for profile in profiles if profile["is_numeric"]]
+    detected_pairs = detect_reliability_pairs(numeric_columns)
+
+    subject_keywords = ("subject", "participant", "observation", "athlete", "id")
+    rater_keywords = ("rater", "test", "session", "occasion", "trial", "repeat", "visit")
+    score_keywords = ("score", "value", "result", "measurement", "reading")
+    measure_keywords = ("measure", "metric", "variable")
+
+    wide_score = 0
+    long_score = 0
+    wide_reasons: list[str] = []
+    long_reasons: list[str] = []
+    long_hint_count = 0
+
+    if detected_pairs:
+        pair_points = 4 + min(len(detected_pairs) - 1, 2)
+        wide_score += pair_points
+        wide_reasons.append(f"Found {len(detected_pairs)} likely Test 1/Test 2 measurement pair(s).")
+
+    if len(numeric_columns) >= 3:
+        wide_score += 3
+        wide_reasons.append(f"Found {len(numeric_columns)} numeric measurement columns.")
+    elif len(numeric_columns) == 2:
+        wide_score += 1
+        wide_reasons.append("Found two numeric columns, which can support pairwise wide-format analysis.")
+
+    if column_count and len(numeric_columns) >= max(2, column_count - 1):
+        wide_score += 1
+        wide_reasons.append("Most columns are numeric, which is common in wide-format data.")
+
+    wide_subject_candidate = next(
+        (
+            profile["name"]
+            for profile in profiles
+            if not profile["is_numeric"]
+            and profile["unique_count"] >= max(2, row_count // 3)
+            and profile["unique_ratio"] >= 0.6
+        ),
+        None,
+    )
+    if wide_subject_candidate:
+        wide_score += 1
+        wide_reasons.append(f"{wide_subject_candidate} looks like a row identifier column.")
+
+    best_subject_column = ""
+    best_subject_score = -1
+    best_rater_column = ""
+    best_rater_score = -1
+    best_measure_column = ""
+    best_measure_score = -1
+    best_score_column = ""
+    best_score_score = -1
+
+    for profile in profiles:
+        column_name = profile["name"]
+        unique_count = profile["unique_count"]
+        unique_ratio = profile["unique_ratio"]
+        subject_score = 0
+        rater_score = 0
+        measure_score = 0
+        score_score = 0
+
+        subject_hint = name_has_hint(column_name, subject_keywords)
+        rater_hint = name_has_hint(column_name, rater_keywords)
+        measure_hint = name_has_hint(column_name, measure_keywords)
+        score_hint = name_has_hint(column_name, score_keywords)
+
+        if 0 < unique_count < row_count and unique_ratio <= 0.8:
+            subject_score += 2
+        if 0.1 <= unique_ratio <= 0.6:
+            subject_score += 1
+        if subject_hint:
+            subject_score += 3
+
+        if 2 <= unique_count <= min(12, max(2, row_count)):
+            rater_score += 2
+        if rater_hint:
+            rater_score += 2
+        if profile["is_numeric"] and unique_count <= 4:
+            rater_score += 1
+        if not profile["is_numeric"] and unique_count <= 6:
+            rater_score += 1
+
+        if 2 <= unique_count <= min(25, max(2, row_count)):
+            measure_score += 1
+        if measure_hint:
+            measure_score += 2
+        if not profile["is_numeric"] and unique_count >= 2:
+            measure_score += 1
+
+        if profile["is_numeric"]:
+            if unique_count >= min(5, max(3, row_count // 4)):
+                score_score += 2
+            if unique_ratio >= 0.25:
+                score_score += 1
+            if score_hint:
+                score_score += 2
+            if unique_count <= min(4, max(2, row_count)):
+                score_score -= 1
+
+        if subject_score > best_subject_score:
+            best_subject_column = column_name
+            best_subject_score = subject_score
+        if rater_score > best_rater_score:
+            best_rater_column = column_name
+            best_rater_score = rater_score
+        if measure_score > best_measure_score:
+            best_measure_column = column_name
+            best_measure_score = measure_score
+        if score_score > best_score_score:
+            best_score_column = column_name
+            best_score_score = score_score
+
+        long_hint_count += int(subject_hint or rater_hint or measure_hint or score_hint)
+
+    if len(numeric_columns) == 1:
+        long_score += 4
+        long_reasons.append("Found one primary numeric value column, which is common in long-format data.")
+    elif len(numeric_columns) == 2:
+        long_score += 2
+        long_reasons.append("Found one likely score column plus one low-cardinality numeric column.")
+    elif len(numeric_columns) >= 3:
+        long_score += 1
+        long_reasons.append("Multiple numeric columns were found, but some may be coded descriptors rather than separate measures.")
+
+    if row_count >= max(12, column_count * 3):
+        long_score += 2
+        long_reasons.append("There are many more rows than columns, which is common in long-format data.")
+
+    if best_subject_score >= 2:
+        long_score += 2
+        long_reasons.append(f"{best_subject_column} looks like a repeated subject or observation identifier.")
+    if best_rater_score >= 2:
+        long_score += 2
+        long_reasons.append(f"{best_rater_column} looks like a test, rater, or occasion column.")
+    if best_measure_score >= 2:
+        long_score += 1
+        long_reasons.append(f"{best_measure_column} looks like a measurement descriptor column.")
+    if best_score_score >= 2:
+        long_score += 2
+        long_reasons.append(f"{best_score_column} looks like the main numeric score column.")
+
+    if best_subject_score >= 2 and best_score_score >= 2 and (best_rater_score >= 2 or best_measure_score >= 2):
+        long_score += 2
+
+    detected_format = "uncertain"
+    if wide_score >= long_score + 3:
+        detected_format = "wide"
+    elif long_score >= wide_score + 3:
+        if len(numeric_columns) >= 3 and long_hint_count == 0:
+            detected_format = "uncertain"
+        else:
+            detected_format = "long"
+
+    total_score = max(1, wide_score + long_score)
+    confidence = round(max(wide_score, long_score) / total_score, 3)
+    if detected_format == "uncertain":
+        confidence = round(1 - (abs(wide_score - long_score) / total_score), 3)
+
+    reasons = []
+    if detected_format == "wide":
+        reasons = wide_reasons[:3]
+    elif detected_format == "long":
+        reasons = long_reasons[:3]
+    else:
+        reasons = (long_reasons[:2] + wide_reasons[:2])[:4]
+        if len(numeric_columns) >= 3 and long_hint_count == 0:
+            reasons.insert(0, "The sheet has mixed signals: repeated rows suggest long format, but the column names are not descriptive enough to be confident.")
+
+    return {
+        "format": detected_format,
+        "confidence": confidence,
+        "wide_score": wide_score,
+        "long_score": long_score,
+        "reasons": reasons,
+        "suggested_columns": {
+            "wide": {
+                "subject_column": wide_subject_candidate,
+                "measurement_columns": numeric_columns,
+            },
+            "long": {
+                "subject_column": best_subject_column if best_subject_score >= 2 else None,
+                "rater_column": best_rater_column if best_rater_score >= 2 else None,
+                "measurement_column": best_measure_column if best_measure_score >= 2 else None,
+                "score_column": best_score_column if best_score_score >= 2 else None,
+            },
+        },
+    }
+
+
 def scan_sheet(name: str, dataframe: pd.DataFrame) -> dict:
     numeric_columns = [
         column
@@ -231,6 +445,7 @@ def scan_sheet(name: str, dataframe: pd.DataFrame) -> dict:
         if pd.api.types.is_numeric_dtype(dataframe[column])
     ]
     detected_pairs = detect_reliability_pairs(numeric_columns)
+    structure_detection = detect_dataset_structure(dataframe)
 
     return {
         "name": name,
@@ -239,6 +454,7 @@ def scan_sheet(name: str, dataframe: pd.DataFrame) -> dict:
         "columns": list(dataframe.columns),
         "numeric_columns": numeric_columns,
         "detected_pairs": detected_pairs,
+        "structure_detection": structure_detection,
     }
 
 
@@ -925,6 +1141,160 @@ def analyse_wide_dataset(
     }
 
 
+def prepare_long_pair_frame(
+    dataframe: pd.DataFrame,
+    subject_column: str,
+    measurement_column: str,
+    measurement_value: str,
+    rater_column: str,
+    score_column: str,
+    x_rater_value: str,
+    y_rater_value: str,
+) -> pd.DataFrame:
+    filtered = dataframe.loc[
+        dataframe[measurement_column].astype(str) == str(measurement_value),
+        [subject_column, rater_column, score_column],
+    ].copy()
+
+    if filtered.empty:
+        raise AnalysisError(f"No rows were found for measurement '{measurement_value}'.")
+
+    filtered[score_column] = pd.to_numeric(filtered[score_column], errors="coerce")
+    filtered = filtered.loc[filtered[rater_column].astype(str).isin([str(x_rater_value), str(y_rater_value)])]
+
+    if filtered.empty:
+        raise AnalysisError(f"No rows were found for the selected repeated-measure levels in '{measurement_value}'.")
+
+    pivot = filtered.pivot_table(
+        index=subject_column,
+        columns=rater_column,
+        values=score_column,
+        aggfunc="mean",
+    )
+
+    pivot.columns = [str(column) for column in pivot.columns]
+    required_columns = [str(x_rater_value), str(y_rater_value)]
+    missing_columns = [column for column in required_columns if column not in pivot.columns]
+    if missing_columns:
+        raise AnalysisError(
+            f"The selected long-format data for '{measurement_value}' does not contain both repeated-measure levels: {', '.join(missing_columns)}."
+        )
+
+    wide_frame = pivot.reset_index()[[subject_column, *required_columns]].copy()
+    return wide_frame
+
+
+def analyse_long_dataset(
+    upload_record: dict,
+    sheet_name: str,
+    subject_column: str,
+    measurement_column: str,
+    rater_column: str,
+    score_column: str,
+    selected_measurements: list[str],
+    x_rater_value: str,
+    y_rater_value: str,
+    study_design: str,
+    agreement_definition: str,
+    measurement_unit: str,
+    figure_palette: str,
+    figure_action: str,
+) -> dict:
+    dataframe = read_dataset(get_upload_path(upload_record), upload_record["file_type"], sheet_name)
+    recommendation = build_icc_recommendation(study_design, agreement_definition, measurement_unit)
+
+    required_columns = [subject_column, measurement_column, rater_column, score_column]
+    missing_columns = [column for column in required_columns if column not in dataframe.columns]
+    if missing_columns:
+        raise AnalysisError(f"The selected long-format columns were not found: {', '.join(missing_columns)}.")
+
+    if len({subject_column, measurement_column, rater_column, score_column}) < 4:
+        raise AnalysisError("Choose different columns for subject, measurement, repeated-measure level, and score.")
+
+    if not x_rater_value or not y_rater_value or str(x_rater_value) == str(y_rater_value):
+        raise AnalysisError("Choose two different repeated-measure levels for the long-format comparison.")
+
+    available_measurements = [str(value) for value in dataframe[measurement_column].dropna().astype(str).unique().tolist()]
+    if not selected_measurements:
+        raise AnalysisError("Select at least one measurement to analyse from the long-format data.")
+
+    invalid_measurements = [value for value in selected_measurements if str(value) not in available_measurements]
+    if invalid_measurements:
+        raise AnalysisError(f"The selected measurements were not found in the dataset: {', '.join(invalid_measurements)}.")
+
+    pair_results: list[dict] = []
+    for measurement_value in selected_measurements:
+        wide_frame = prepare_long_pair_frame(
+            dataframe,
+            subject_column,
+            measurement_column,
+            measurement_value,
+            rater_column,
+            score_column,
+            x_rater_value,
+            y_rater_value,
+        )
+        pair_definition = {
+            "pair_key": manual_pair_key(f"{measurement_value}-{x_rater_value}", f"{measurement_value}-{y_rater_value}"),
+            "pair_label": str(measurement_value),
+            "measurement_columns": [str(x_rater_value), str(y_rater_value)],
+            "primary_x_column": str(x_rater_value),
+            "primary_y_column": str(y_rater_value),
+        }
+        pair_result = analyse_pair_result(wide_frame, subject_column, pair_definition, recommendation)
+        pair_result.update(
+            {
+                "long_measurement_value": str(measurement_value),
+                "long_measurement_column": measurement_column,
+                "long_rater_column": rater_column,
+                "long_score_column": score_column,
+                "long_subject_column": subject_column,
+                "data_format": "long",
+            }
+        )
+        pair_results.append(pair_result)
+
+    return {
+        "config": {
+            "upload_id": upload_record["id"],
+            "selected_sheet": sheet_name,
+            "subject_column": subject_column,
+            "measurement_columns": [score_column],
+            "primary_x_column": str(x_rater_value),
+            "primary_y_column": str(y_rater_value),
+            "selected_pair_keys": [pair_result["pair_key"] for pair_result in pair_results],
+            "selected_pair_labels": [pair_result["pair_label"] for pair_result in pair_results],
+            "pair_selections": [
+                {
+                    "pair_label": pair_result["pair_label"],
+                    "primary_x_column": pair_result["primary_x_column"],
+                    "primary_y_column": pair_result["primary_y_column"],
+                }
+                for pair_result in pair_results
+            ],
+            "study_design": study_design,
+            "agreement_definition": agreement_definition,
+            "measurement_unit": measurement_unit,
+            "figure_palette": figure_palette,
+            "figure_action": figure_action,
+            "data_format": "long",
+            "long_measurement_column": measurement_column,
+            "long_rater_column": rater_column,
+            "long_score_column": score_column,
+            "long_selected_measurements": [str(value) for value in selected_measurements],
+            "long_x_rater_value": str(x_rater_value),
+            "long_y_rater_value": str(y_rater_value),
+        },
+        "recommendation": recommendation,
+        "dataset_summary": {
+            "pair_count": len(pair_results),
+            "source_rows": int(len(dataframe)),
+            "subject_label": subject_column,
+        },
+        "pair_results": pair_results,
+    }
+
+
 def save_analysis_record(analysis_result: dict) -> str:
     analysis_id = uuid4().hex
     payload = {"id": analysis_id, **analysis_result}
@@ -939,6 +1309,20 @@ def build_source_data_frame(upload_record: dict, analysis_record: dict, pair_res
         upload_record["file_type"],
         config["selected_sheet"],
     )
+
+    if config.get("data_format") == "long":
+        wide_frame = prepare_long_pair_frame(
+            dataframe,
+            config["subject_column"],
+            config["long_measurement_column"],
+            pair_result["long_measurement_value"],
+            config["long_rater_column"],
+            config["long_score_column"],
+            pair_result["primary_x_column"],
+            pair_result["primary_y_column"],
+        )
+        return wide_frame.copy()
+
     prepared = prepare_analysis_frame(
         dataframe,
         config.get("subject_column"),

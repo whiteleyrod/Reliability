@@ -12,6 +12,7 @@ This plan now also serves as an implementation record.
 - Worksheet scanning for Excel workbooks
 - Uploaded data preview in the browser
 - Automatic detection of likely `Test 1` / `Test 2` reliability pairs
+- Initial worksheet-level wide-vs-long structure detection metadata
 - Clean pair-selection interface with support for multiple selected pairs in one run
 - Manual X/Y fallback when no detected pair is selected
 - Observation identifier selection
@@ -45,10 +46,15 @@ This plan now also serves as an implementation record.
 
 ### Partially implemented or still open
 
-- Long-format data mapping is not yet implemented as a full workflow
+- Long-format data mapping is not yet implemented as a full workflow, though initial wide-vs-long structure detection has now started
 - Missing-data handling is currently drop-complete-cases per selected pair, with reporting but limited user options
 - Automated test coverage is still limited, though a basic CI workflow now runs helper and plotting smoke tests
 - Interpretation guidance is present in a limited form and could be expanded
+
+Sample files for upcoming long-format work:
+
+- canonical clean long-format sample: `SampleData/All Metrics Cleaned_Smaller_Long.xlsx`
+- ambiguous long-format sample for uncertain detection testing: `SampleData/All Metrics Cleaned_Smaller_Long_Messy.xlsx`
 
 ## 1. Goal
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import matplotlib.pyplot as plt
@@ -10,13 +11,16 @@ from matplotlib.collections import PolyCollection
 
 from app import (
     app,
+    analyse_long_dataset,
     build_bland_altman_plot,
     build_explicit_pair_definitions,
     build_html_report,
     build_markdown_report,
     build_selected_pair_definitions,
+    detect_dataset_structure,
     format_fixed_decimal,
     form_state_from_request,
+    prepare_long_pair_frame,
     build_regression_confidence_band,
     build_scatter_plot,
     build_typical_error_table,
@@ -27,6 +31,8 @@ from app import (
 
 
 class ReliabilityAppTests(unittest.TestCase):
+    SAMPLE_DATA_DIR = Path(__file__).resolve().parents[1] / "SampleData"
+
     def test_detect_reliability_pairs_finds_and_sorts_pairs(self) -> None:
         columns = [
             "Knee Flexion Test 2",
@@ -193,6 +199,79 @@ class ReliabilityAppTests(unittest.TestCase):
             ["Jump Test 1", "Jump Test 2", "Sprint Test 1", "Sprint Test 2"],
         )
         self.assertEqual(len(form_state["pair_selections"]), 2)
+
+    def test_detect_dataset_structure_identifies_wide_sample(self) -> None:
+        dataframe = pd.read_excel(self.SAMPLE_DATA_DIR / "All Metrics Cleaned_Smaller.xlsx", sheet_name="Variables")
+
+        structure = detect_dataset_structure(dataframe)
+
+        self.assertEqual(structure["format"], "wide")
+        self.assertGreater(structure["wide_score"], structure["long_score"])
+        self.assertTrue(structure["suggested_columns"]["wide"]["measurement_columns"])
+
+    def test_detect_dataset_structure_identifies_clean_long_sample(self) -> None:
+        dataframe = pd.read_excel(self.SAMPLE_DATA_DIR / "All Metrics Cleaned_Smaller_Long.xlsx", sheet_name="LongFormat")
+
+        structure = detect_dataset_structure(dataframe)
+
+        self.assertEqual(structure["format"], "long")
+        self.assertEqual(structure["suggested_columns"]["long"]["score_column"], "score")
+        self.assertEqual(structure["suggested_columns"]["long"]["rater_column"], "test")
+
+    def test_detect_dataset_structure_marks_ambiguous_long_sample_uncertain(self) -> None:
+        dataframe = pd.read_excel(self.SAMPLE_DATA_DIR / "All Metrics Cleaned_Smaller_Long_Messy.xlsx", sheet_name="AmbiguousLong")
+
+        structure = detect_dataset_structure(dataframe)
+
+        self.assertEqual(structure["format"], "uncertain")
+        self.assertGreaterEqual(structure["long_score"], structure["wide_score"])
+        self.assertTrue(structure["reasons"])
+
+    def test_prepare_long_pair_frame_pivots_measurement_to_wide(self) -> None:
+        dataframe = pd.read_excel(self.SAMPLE_DATA_DIR / "All Metrics Cleaned_Smaller_Long.xlsx", sheet_name="LongFormat")
+
+        wide_frame = prepare_long_pair_frame(
+            dataframe,
+            subject_column="observation_id",
+            measurement_column="measurement",
+            measurement_value="INV_Ankle_Power_LAND",
+            rater_column="test",
+            score_column="score",
+            x_rater_value="Test 1",
+            y_rater_value="Test 2",
+        )
+
+        self.assertEqual(list(wide_frame.columns), ["observation_id", "Test 1", "Test 2"])
+        self.assertEqual(len(wide_frame), 6)
+
+    def test_analyse_long_dataset_returns_pair_results_per_measurement(self) -> None:
+        upload_record = {
+            "id": "long-upload",
+            "stored_filename": "All Metrics Cleaned_Smaller_Long.xlsx",
+            "file_type": "xlsx",
+        }
+
+        with patch("app.get_upload_path", return_value=self.SAMPLE_DATA_DIR / "All Metrics Cleaned_Smaller_Long.xlsx"):
+            analysis_result = analyse_long_dataset(
+                upload_record=upload_record,
+                sheet_name="LongFormat",
+                subject_column="observation_id",
+                measurement_column="measurement",
+                rater_column="test",
+                score_column="score",
+                selected_measurements=["INV_Ankle_Power_LAND", "INV_Ankle_Power_PR"],
+                x_rater_value="Test 1",
+                y_rater_value="Test 2",
+                study_design="two_way_random",
+                agreement_definition="absolute",
+                measurement_unit="single",
+                figure_palette="classic-blue",
+                figure_action="both",
+            )
+
+        self.assertEqual(analysis_result["config"]["data_format"], "long")
+        self.assertEqual(len(analysis_result["pair_results"]), 2)
+        self.assertEqual(analysis_result["pair_results"][0]["primary_x_column"], "Test 1")
 
     def test_build_html_report_includes_metrics_and_figures(self) -> None:
         upload_record = {

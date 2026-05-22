@@ -12,6 +12,7 @@ from app import (
     AnalysisError,
     DEFAULT_FIGURE_PALETTE,
     UPLOAD_DIR,
+    analyse_long_dataset,
     analyse_wide_dataset,
     build_bland_altman_plot,
     build_palette_preview_frame,
@@ -225,11 +226,34 @@ def main() -> None:
         st.error("At least two numeric columns are required for reliability analysis.")
         return
 
+    structure_detection = sheet_meta.get("structure_detection", {})
     analysis_record = st.session_state.get("analysis_record")
     if analysis_record and analysis_record["config"].get("upload_id") != upload_record["id"]:
         analysis_record = None
     if analysis_record and analysis_record["config"].get("selected_sheet") != selected_sheet:
         analysis_record = None
+
+    suggested_format = structure_detection.get("format", "wide")
+    saved_data_format = analysis_record["config"].get("data_format") if analysis_record else None
+    selected_data_format = saved_data_format or ("long" if suggested_format == "long" else "wide")
+
+    detection_label = {
+        "wide": "Wide format detected",
+        "long": "Long format detected",
+        "uncertain": "Data layout is uncertain",
+    }.get(suggested_format, "Data layout review")
+    st.markdown(f"**{detection_label}**")
+    for reason in structure_detection.get("reasons", []):
+        st.caption(reason)
+
+    selected_data_format = st.radio(
+        "Data layout",
+        options=["wide", "long"],
+        index=0 if selected_data_format == "wide" else 1,
+        format_func=lambda value: "Wide format" if value == "wide" else "Long format",
+        help="Confirm whether your data is arranged with one column per repeated measurement or with one row per observation-measurement combination.",
+        horizontal=True,
+    )
 
     detected_pairs = sheet_meta.get("detected_pairs", [])
     default_pair_rows = default_pair_selections(sheet_meta, analysis_record)
@@ -262,103 +286,199 @@ def main() -> None:
     with preview_column_2:
         st.caption("Bland-Altman preview")
         st.pyplot(build_bland_altman_plot(palette_preview_frame, "Test 1", "Test 2", selected_palette_key), use_container_width=True)
-
-    with st.expander("Available measurement columns", expanded=False):
-        st.dataframe(
-            pd.DataFrame({"Measurement column": numeric_columns}),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    with st.expander("Suggested column pairs", expanded=False):
-        if detected_pairs:
+    if selected_data_format == "wide":
+        with st.expander("Available measurement columns", expanded=False):
             st.dataframe(
-                pd.DataFrame(
-                    [
-                        {
-                            "Suggested pair": pair["label"],
-                            "X column": pair["test_1"],
-                            "Y column": pair["test_2"],
-                        }
-                        for pair in detected_pairs
-                    ]
-                ),
+                pd.DataFrame({"Measurement column": numeric_columns}),
                 use_container_width=True,
                 hide_index=True,
             )
-            st.caption("Use these suggestions as a guide, then confirm the exact pairs you want below.")
-        else:
-            st.info("No automatic Test 1/Test 2 suggestions were detected for this worksheet.")
 
-    pair_count = st.number_input(
-        "Number of analysis pairs",
-        min_value=1,
-        max_value=min(12, max(1, len(numeric_columns) * (len(numeric_columns) - 1))),
-        value=max(1, len(default_pair_rows)),
-        step=1,
-        help=(
-            "Choose how many X/Y column pairs you want to analyse. "
-            "Each pair below becomes a separate reliability analysis with its own plots and results."
-        ),
-        key=f"pair-count-{upload_record['id']}-{selected_sheet}",
-    )
+        with st.expander("Suggested column pairs", expanded=False):
+            if detected_pairs:
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "Suggested pair": pair["label"],
+                                "X column": pair["test_1"],
+                                "Y column": pair["test_2"],
+                            }
+                            for pair in detected_pairs
+                        ]
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.caption("Use these suggestions as a guide, then confirm the exact pairs you want below.")
+            else:
+                st.info("No automatic Test 1/Test 2 suggestions were detected for this worksheet.")
 
-    with st.form("analysis-form"):
-        subject_options = [""] + sheet_meta["columns"]
-        subject_column = st.selectbox(
-            "Observation ID column",
-            options=subject_options,
+        pair_count = st.number_input(
+            "Number of analysis pairs",
+            min_value=1,
+            max_value=min(12, max(1, len(numeric_columns) * (len(numeric_columns) - 1))),
+            value=max(1, len(default_pair_rows)),
+            step=1,
             help=(
-                "Choose the column that identifies each person, item, or case. "
-                "This helps the app keep each row matched correctly across repeated measurements. "
-                "If your file does not have an ID column, use generated row labels."
+                "Choose how many X/Y column pairs you want to analyse. "
+                "Each pair below becomes a separate reliability analysis with its own plots and results."
             ),
-            format_func=lambda value: "Use generated row labels" if value == "" else value,
+            key=f"pair-count-{upload_record['id']}-{selected_sheet}",
+        )
+    else:
+        all_columns = sheet_meta.get("columns", [])
+        suggested_long = structure_detection.get("suggested_columns", {}).get("long", {})
+        default_subject_column = suggested_long.get("subject_column") or (analysis_record["config"].get("subject_column") if analysis_record else "") or all_columns[0]
+        default_measurement_column = suggested_long.get("measurement_column") or (analysis_record["config"].get("long_measurement_column") if analysis_record else "") or (all_columns[1] if len(all_columns) > 1 else all_columns[0])
+        default_rater_column = suggested_long.get("rater_column") or (analysis_record["config"].get("long_rater_column") if analysis_record else "") or (all_columns[2] if len(all_columns) > 2 else all_columns[0])
+        default_score_column = suggested_long.get("score_column") or (analysis_record["config"].get("long_score_column") if analysis_record else "") or numeric_columns[-1]
+
+        long_subject_column = st.selectbox(
+            "Observation ID column",
+            options=all_columns,
+            index=all_columns.index(default_subject_column) if default_subject_column in all_columns else 0,
+            help="Choose the column that identifies each person, item, or case across repeated rows.",
+            key=f"long-subject-{upload_record['id']}-{selected_sheet}",
+        )
+        long_column_1, long_column_2, long_column_3 = st.columns(3)
+        with long_column_1:
+            long_measurement_column = st.selectbox(
+                "Measurement name column",
+                options=all_columns,
+                index=all_columns.index(default_measurement_column) if default_measurement_column in all_columns else 0,
+                help="Choose the column that names which variable or metric each row belongs to.",
+                key=f"long-measurement-{upload_record['id']}-{selected_sheet}",
+            )
+        with long_column_2:
+            long_rater_column = st.selectbox(
+                "Repeated-measure level column",
+                options=all_columns,
+                index=all_columns.index(default_rater_column) if default_rater_column in all_columns else 0,
+                help="Choose the column that identifies the repeated measure, such as Test 1/Test 2, session, occasion, or rater.",
+                key=f"long-rater-{upload_record['id']}-{selected_sheet}",
+            )
+        with long_column_3:
+            long_score_column = st.selectbox(
+                "Score column",
+                options=all_columns,
+                index=all_columns.index(default_score_column) if default_score_column in all_columns else 0,
+                help="Choose the numeric column that contains the actual score or value to analyse.",
+                key=f"long-score-{upload_record['id']}-{selected_sheet}",
+            )
+
+        measurement_values = []
+        if long_measurement_column in source_preview_frame.columns:
+            measurement_values = sorted(source_preview_frame[long_measurement_column].dropna().astype(str).unique().tolist())
+        rater_values = []
+        if long_rater_column in source_preview_frame.columns:
+            rater_values = sorted(source_preview_frame[long_rater_column].dropna().astype(str).unique().tolist())
+
+        default_selected_measurements = []
+        if analysis_record and analysis_record["config"].get("data_format") == "long":
+            default_selected_measurements = [
+                value for value in analysis_record["config"].get("long_selected_measurements", []) if value in measurement_values
+            ]
+        if not default_selected_measurements:
+            default_selected_measurements = measurement_values[: min(3, len(measurement_values))]
+
+        st.markdown("**Long-format measurements to analyse**")
+        selected_measurements = st.multiselect(
+            "Measurements",
+            options=measurement_values,
+            default=default_selected_measurements,
+            help="Select one or more measurement names to analyse. Each selected measurement becomes a separate result section.",
         )
 
-        st.markdown("**Pairs to analyse**")
-        st.caption("Pick the exact column headers you want to compare. Each row below runs as a separate analysis.")
+        if len(rater_values) < 2:
+            st.error("At least two repeated-measure levels are required in the selected long-format level column.")
+            return
 
-        pair_selections: list[dict] = []
-        for pair_index in range(int(pair_count)):
-            default_pair = default_pair_rows[pair_index] if pair_index < len(default_pair_rows) else {}
-            pair_columns = st.columns([1.2, 1, 1])
-            with pair_columns[0]:
-                pair_label = st.text_input(
-                    f"Pair {pair_index + 1} label",
-                    value=default_pair.get("pair_label", ""),
-                    help="Optional short name for this comparison. If left blank, the app will use the selected X and Y column names.",
-                    key=f"pair-label-{upload_record['id']}-{selected_sheet}-{pair_index}",
-                )
-            with pair_columns[1]:
-                default_x = default_pair.get("primary_x_column", numeric_columns[0])
-                default_x_index = numeric_columns.index(default_x) if default_x in numeric_columns else 0
-                pair_x_column = st.selectbox(
-                    f"Pair {pair_index + 1} X column",
-                    options=numeric_columns,
-                    index=default_x_index,
-                    help="Choose the measurement column to place on the horizontal axis and treat as the first value in this pair.",
-                    key=f"pair-x-{upload_record['id']}-{selected_sheet}-{pair_index}",
-                )
-            with pair_columns[2]:
-                fallback_y = numeric_columns[min(1, len(numeric_columns) - 1)]
-                default_y = default_pair.get("primary_y_column", fallback_y)
-                default_y_index = numeric_columns.index(default_y) if default_y in numeric_columns else min(1, len(numeric_columns) - 1)
-                pair_y_column = st.selectbox(
-                    f"Pair {pair_index + 1} Y column",
-                    options=numeric_columns,
-                    index=default_y_index,
-                    help="Choose the measurement column to place on the vertical axis and treat as the second value in this pair.",
-                    key=f"pair-y-{upload_record['id']}-{selected_sheet}-{pair_index}",
-                )
-
-            pair_selections.append(
-                {
-                    "pair_label": pair_label,
-                    "primary_x_column": pair_x_column,
-                    "primary_y_column": pair_y_column,
-                }
+        default_x_rater = (analysis_record["config"].get("long_x_rater_value") if analysis_record and analysis_record["config"].get("data_format") == "long" else "") or rater_values[0]
+        default_y_rater = (analysis_record["config"].get("long_y_rater_value") if analysis_record and analysis_record["config"].get("data_format") == "long" else "") or rater_values[min(1, len(rater_values) - 1)]
+        level_column_1, level_column_2 = st.columns(2)
+        with level_column_1:
+            long_x_rater_value = st.selectbox(
+                "First repeated-measure level",
+                options=rater_values,
+                index=rater_values.index(default_x_rater) if default_x_rater in rater_values else 0,
+                help="Choose the first repeated-measure level to compare, such as Test 1.",
             )
+        with level_column_2:
+            long_y_rater_value = st.selectbox(
+                "Second repeated-measure level",
+                options=rater_values,
+                index=rater_values.index(default_y_rater) if default_y_rater in rater_values else min(1, len(rater_values) - 1),
+                help="Choose the second repeated-measure level to compare, such as Test 2.",
+            )
+
+        with st.expander("Available long-format columns", expanded=False):
+            st.dataframe(
+                pd.DataFrame({"Column": all_columns}),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    with st.form("analysis-form"):
+        if selected_data_format == "wide":
+            subject_options = [""] + sheet_meta["columns"]
+            subject_column = st.selectbox(
+                "Observation ID column",
+                options=subject_options,
+                help=(
+                    "Choose the column that identifies each person, item, or case. "
+                    "This helps the app keep each row matched correctly across repeated measurements. "
+                    "If your file does not have an ID column, use generated row labels."
+                ),
+                format_func=lambda value: "Use generated row labels" if value == "" else value,
+            )
+
+            st.markdown("**Pairs to analyse**")
+            st.caption("Pick the exact column headers you want to compare. Each row below runs as a separate analysis.")
+
+            pair_selections: list[dict] = []
+            for pair_index in range(int(pair_count)):
+                default_pair = default_pair_rows[pair_index] if pair_index < len(default_pair_rows) else {}
+                pair_columns = st.columns([1.2, 1, 1])
+                with pair_columns[0]:
+                    pair_label = st.text_input(
+                        f"Pair {pair_index + 1} label",
+                        value=default_pair.get("pair_label", ""),
+                        help="Optional short name for this comparison. If left blank, the app will use the selected X and Y column names.",
+                        key=f"pair-label-{upload_record['id']}-{selected_sheet}-{pair_index}",
+                    )
+                with pair_columns[1]:
+                    default_x = default_pair.get("primary_x_column", numeric_columns[0])
+                    default_x_index = numeric_columns.index(default_x) if default_x in numeric_columns else 0
+                    pair_x_column = st.selectbox(
+                        f"Pair {pair_index + 1} X column",
+                        options=numeric_columns,
+                        index=default_x_index,
+                        help="Choose the measurement column to place on the horizontal axis and treat as the first value in this pair.",
+                        key=f"pair-x-{upload_record['id']}-{selected_sheet}-{pair_index}",
+                    )
+                with pair_columns[2]:
+                    fallback_y = numeric_columns[min(1, len(numeric_columns) - 1)]
+                    default_y = default_pair.get("primary_y_column", fallback_y)
+                    default_y_index = numeric_columns.index(default_y) if default_y in numeric_columns else min(1, len(numeric_columns) - 1)
+                    pair_y_column = st.selectbox(
+                        f"Pair {pair_index + 1} Y column",
+                        options=numeric_columns,
+                        index=default_y_index,
+                        help="Choose the measurement column to place on the vertical axis and treat as the second value in this pair.",
+                        key=f"pair-y-{upload_record['id']}-{selected_sheet}-{pair_index}",
+                    )
+
+                pair_selections.append(
+                    {
+                        "pair_label": pair_label,
+                        "primary_x_column": pair_x_column,
+                        "primary_y_column": pair_y_column,
+                    }
+                )
+        else:
+            pair_selections = []
+            subject_column = long_subject_column
 
         setting_column_1, setting_column_2, setting_column_3 = st.columns(3)
         with setting_column_1:
@@ -400,31 +520,49 @@ def main() -> None:
 
     if submitted:
         try:
-            measurement_columns = list(
-                dict.fromkeys(
-                    column
-                    for pair_selection in pair_selections
-                    for column in (
-                        pair_selection["primary_x_column"],
-                        pair_selection["primary_y_column"],
+            if selected_data_format == "wide":
+                measurement_columns = list(
+                    dict.fromkeys(
+                        column
+                        for pair_selection in pair_selections
+                        for column in (
+                            pair_selection["primary_x_column"],
+                            pair_selection["primary_y_column"],
+                        )
                     )
                 )
-            )
-            analysis_result = analyse_wide_dataset(
-                upload_record=upload_record,
-                sheet_name=selected_sheet,
-                subject_column=subject_column or None,
-                measurement_columns=measurement_columns,
-                primary_x_column=pair_selections[0]["primary_x_column"] if pair_selections else "",
-                primary_y_column=pair_selections[0]["primary_y_column"] if pair_selections else "",
-                selected_pair_keys=[],
-                study_design=STUDY_DESIGN_OPTIONS[study_design_label],
-                agreement_definition=AGREEMENT_OPTIONS[agreement_label],
-                measurement_unit=MEASUREMENT_OPTIONS[measurement_label],
-                figure_palette=selected_palette_key,
-                figure_action="both",
-                pair_selections=pair_selections,
-            )
+                analysis_result = analyse_wide_dataset(
+                    upload_record=upload_record,
+                    sheet_name=selected_sheet,
+                    subject_column=subject_column or None,
+                    measurement_columns=measurement_columns,
+                    primary_x_column=pair_selections[0]["primary_x_column"] if pair_selections else "",
+                    primary_y_column=pair_selections[0]["primary_y_column"] if pair_selections else "",
+                    selected_pair_keys=[],
+                    study_design=STUDY_DESIGN_OPTIONS[study_design_label],
+                    agreement_definition=AGREEMENT_OPTIONS[agreement_label],
+                    measurement_unit=MEASUREMENT_OPTIONS[measurement_label],
+                    figure_palette=selected_palette_key,
+                    figure_action="both",
+                    pair_selections=pair_selections,
+                )
+            else:
+                analysis_result = analyse_long_dataset(
+                    upload_record=upload_record,
+                    sheet_name=selected_sheet,
+                    subject_column=long_subject_column,
+                    measurement_column=long_measurement_column,
+                    rater_column=long_rater_column,
+                    score_column=long_score_column,
+                    selected_measurements=selected_measurements,
+                    x_rater_value=long_x_rater_value,
+                    y_rater_value=long_y_rater_value,
+                    study_design=STUDY_DESIGN_OPTIONS[study_design_label],
+                    agreement_definition=AGREEMENT_OPTIONS[agreement_label],
+                    measurement_unit=MEASUREMENT_OPTIONS[measurement_label],
+                    figure_palette=selected_palette_key,
+                    figure_action="both",
+                )
             st.session_state["analysis_record"] = {"id": uuid4().hex, **analysis_result}
             analysis_record = st.session_state["analysis_record"]
         except AnalysisError as exc:

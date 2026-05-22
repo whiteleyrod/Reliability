@@ -34,6 +34,8 @@ Sample workbook for testing:
 - [SampleData/All Metrics Cleaned.xlsx](SampleData/All%20Metrics%20Cleaned.xlsx)
 - primary sample sheet: `Variables`
 - the app now auto-detects `Test 1` / `Test 2` column pairs from this sheet
+- canonical clean long-format sample: [SampleData/All Metrics Cleaned_Smaller_Long.xlsx](SampleData/All%20Metrics%20Cleaned_Smaller_Long.xlsx)
+- ambiguous long-format sample for uncertain detection testing: [SampleData/All Metrics Cleaned_Smaller_Long_Messy.xlsx](SampleData/All%20Metrics%20Cleaned_Smaller_Long_Messy.xlsx)
 
 ## Activate the virtual environment
 
@@ -120,6 +122,7 @@ Notes:
 - if the Flask and Streamlit versions diverge substantially over time, splitting them into separate repositories may become cleaner later
 - minimum detectable change is reported as `Typical error × 1.96 × √2`, with typical error defined as `SD(differences) / √2`
 - report downloads now include HTML as well as PDF and DOCX
+- upload scanning now includes an initial wide-vs-long structure detection pass in metadata, though the full long-format analysis workflow is still in progress
 
 ## Build a Windows standalone app
 
