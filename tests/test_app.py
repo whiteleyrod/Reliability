@@ -22,6 +22,8 @@ from app import (
     detect_dataset_structure,
     format_fixed_decimal,
     form_state_from_request,
+    get_upload_path,
+    list_sample_datasets,
     prepare_long_pair_frame,
     scan_sheet,
     build_regression_confidence_band,
@@ -35,6 +37,26 @@ from app import (
 
 class ReliabilityAppTests(unittest.TestCase):
     SAMPLE_DATA_DIR = Path(__file__).resolve().parents[1] / "SampleData"
+
+    def test_list_sample_datasets_includes_preview_and_tutorial_notes(self) -> None:
+        sample_datasets = list_sample_datasets()
+
+        long_clean = next(sample for sample in sample_datasets if sample["key"] == "long-clean")
+
+        self.assertEqual(long_clean["preferred_sheet"], "LongFormat")
+        self.assertTrue(long_clean["preview_columns"])
+        self.assertTrue(long_clean["preview_rows"])
+        self.assertIn("long-format", long_clean["tutorial_notes"].lower())
+
+    def test_get_upload_path_uses_source_path_when_present(self) -> None:
+        upload_record = {
+            "stored_filename": "ignored.xlsx",
+            "source_path": str(self.SAMPLE_DATA_DIR / "All Metrics Cleaned_Smaller.xlsx"),
+        }
+
+        resolved_path = get_upload_path(upload_record)
+
+        self.assertEqual(resolved_path, self.SAMPLE_DATA_DIR / "All Metrics Cleaned_Smaller.xlsx")
 
     def test_detect_reliability_pairs_finds_and_sorts_pairs(self) -> None:
         columns = [

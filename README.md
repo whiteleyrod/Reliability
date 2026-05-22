@@ -5,6 +5,7 @@ Flask-based starter app for inter-rater reliability analysis.
 Current build includes:
 
 - CSV and XLSX upload
+- bundled tutorial sample workbooks with explanations and preview tables in both Flask and Streamlit
 - worksheet scanning and column heading discovery
 - wide-format column selection for reliability analysis
 - Streamlit long-format mapping workflow with detected layout summary and wide/long override
@@ -35,6 +36,7 @@ Sample workbook for testing:
 - [SampleData/All Metrics Cleaned.xlsx](SampleData/All%20Metrics%20Cleaned.xlsx)
 - primary sample sheet: `Variables`
 - the app now auto-detects `Test 1` / `Test 2` column pairs from this sheet
+- [SampleData/All Metrics Cleaned_Smaller.xlsx](SampleData/All%20Metrics%20Cleaned_Smaller.xlsx) is the quickest wide-format tutorial sample for pair selection, palette previews, and exports
 - canonical clean long-format sample: [SampleData/All Metrics Cleaned_Smaller_Long.xlsx](SampleData/All%20Metrics%20Cleaned_Smaller_Long.xlsx)
 - ambiguous long-format sample for uncertain detection testing: [SampleData/All Metrics Cleaned_Smaller_Long_Messy.xlsx](SampleData/All%20Metrics%20Cleaned_Smaller_Long_Messy.xlsx)
 
@@ -70,7 +72,7 @@ Then open http://127.0.0.1:8000
 
 ## Workflow
 
-1. Upload a `.csv` or `.xlsx` file.
+1. Upload a `.csv` or `.xlsx` file, or open one of the bundled tutorial sample workbooks.
 2. Review detected worksheets and column headings.
 3. Choose the worksheet to analyse.
 4. Select an observation ID column if one exists.
@@ -126,8 +128,23 @@ Notes:
 - upload scanning includes a wide-vs-long structure detection pass in metadata
 - the Streamlit workflow now uses that detection to suggest Wide or Long layout, while still allowing a manual override
 - long-format Streamlit analysis maps observation ID, measurement name, repeated-measure level, and score columns before analysis
+- both Flask and Streamlit now expose bundled tutorial sample workbooks with plain-language explanations and preview data tables before the user opens the sample
 - clean long-format workbook example: `All Metrics Cleaned_Smaller_Long.xlsx` should now enter the long-format workflow instead of the wide pair-builder
-- Flask and Jinja UI parity for the long-format workflow is still pending; the active Streamlit deployment path is the most up-to-date interface
+- Flask and Streamlit now both expose long-format mapping and the canonical long-format measurement chooser
+
+## Tutorial sample entry point
+
+The app now includes a built-in sample tutorial path in both interfaces:
+
+- Flask shows bundled sample workbook cards on the landing page, each with a short explanation, recommended use case, and expandable preview table
+- Streamlit includes a `Use a tutorial sample` tab beside the normal upload tab, with the same sample explanations and previews
+- opening a tutorial sample loads the workbook exactly like a normal upload, so users can still choose the worksheet, review the detected layout, and run the full analysis workflow
+
+Recommended starting points:
+
+- `All Metrics Cleaned_Smaller.xlsx` for the quickest wide-format tutorial
+- `All Metrics Cleaned_Smaller_Long.xlsx` for the clean long-format mapping tutorial
+- `All Metrics Cleaned_Smaller_Long_Messy.xlsx` for uncertain-layout and canonical long-format measurement-name handling
 
 ## Streamlit long-format workflow
 

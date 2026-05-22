@@ -71,6 +71,7 @@ if getattr(sys, "frozen", False):
     DATA_DIR = STORAGE_ROOT / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 ANALYSIS_DIR = DATA_DIR / "analyses"
+SAMPLE_DATA_DIR = RESOURCE_DIR / "SampleData"
 ALLOWED_EXTENSIONS = {"csv", "xlsx"}
 PAIR_PATTERN = re.compile(r"^(?P<label>.+?)\s+Test\s+(?P<test>[12])(?:\.\d+)?\s*$", re.IGNORECASE)
 LONG_LEVEL_PREFIXES = ("test", "round", "session", "trial", "occasion", "visit", "repeat")
@@ -130,6 +131,44 @@ FIGURE_PALETTES = {
     },
 }
 DEFAULT_FIGURE_PALETTE = "classic-blue"
+SAMPLE_DATASETS = [
+    {
+        "key": "wide-full",
+        "filename": "All Metrics Cleaned.xlsx",
+        "title": "Wide-format full workbook",
+        "description": "A fuller wide-format workbook with paired Test 1 and Test 2 measurement columns across multiple variables.",
+        "tutorial_notes": "Use this when you want to learn the classic wide-format flow: choose a worksheet, review detected Test 1/Test 2 pairs, and run multiple pairwise analyses in one session.",
+        "preferred_sheet": "Variables",
+        "audience": "Best for learning the standard wide-format workflow.",
+    },
+    {
+        "key": "wide-small",
+        "filename": "All Metrics Cleaned_Smaller.xlsx",
+        "title": "Wide-format smaller workbook",
+        "description": "A smaller wide-format workbook that is easier to inspect when testing pair selection, palette changes, and report exports.",
+        "tutorial_notes": "Use this for a quicker tutorial pass through the wide-format interface with less on-screen clutter.",
+        "preferred_sheet": "Variables",
+        "audience": "Best for quick demos and smoke testing wide-format analysis.",
+    },
+    {
+        "key": "long-clean",
+        "filename": "All Metrics Cleaned_Smaller_Long.xlsx",
+        "title": "Clean long-format workbook",
+        "description": "A clean long-format workbook where each row represents one observation-measurement-test combination with clearly named identifier, measurement, test, and score columns.",
+        "tutorial_notes": "Use this to learn the intended long-format mapping flow. The app should detect long format and guide you to choose the observation ID, measurement, repeated-measure level, and score columns.",
+        "preferred_sheet": "LongFormat",
+        "audience": "Best for learning the standard long-format workflow.",
+    },
+    {
+        "key": "long-messy",
+        "filename": "All Metrics Cleaned_Smaller_Long_Messy.xlsx",
+        "title": "Messy long-format workbook",
+        "description": "A deliberately ambiguous long-format workbook with less descriptive column names and measurement labels that already contain Test 1/Test 2 suffixes.",
+        "tutorial_notes": "Use this to practice the uncertain-layout workflow. It shows how the app handles manual layout confirmation and canonicalises repeated-measure labels into cleaner measurement choices.",
+        "preferred_sheet": "AmbiguousLong",
+        "audience": "Best for testing uncertain-format detection and manual long-format mapping.",
+    },
+]
 
 for prefix, namespace in DOCX_XML_NAMESPACES.items():
     ET.register_namespace(prefix, namespace)
@@ -164,6 +203,75 @@ def build_palette_preview_frame() -> pd.DataFrame:
 def ensure_storage() -> None:
     for directory in (UPLOAD_DIR, ANALYSIS_DIR):
         directory.mkdir(parents=True, exist_ok=True)
+
+
+def sample_dataset_path(filename: str) -> Path:
+    return SAMPLE_DATA_DIR / filename
+
+
+def sample_dataset_definition(sample_key: str) -> dict:
+    for dataset in SAMPLE_DATASETS:
+        if dataset["key"] == sample_key:
+            return dataset
+    raise AnalysisError("The selected sample dataset could not be found.")
+
+
+def build_upload_record(file_path: Path, original_filename: str, file_id: str | None = None) -> dict:
+    extension = file_path.suffix.lower().lstrip(".")
+    if extension not in ALLOWED_EXTENSIONS:
+        raise AnalysisError("Upload a CSV or XLSX file.")
+
+    resolved_id = file_id or uuid4().hex
+    upload_record = {
+        "id": resolved_id,
+        "original_filename": original_filename,
+        "stored_filename": file_path.name,
+        "file_type": extension,
+        "sheets": scan_upload(file_path, extension),
+        "source_path": str(file_path.resolve()),
+    }
+    save_json(UPLOAD_DIR / f"{resolved_id}.json", upload_record)
+    return upload_record
+
+
+def load_sample_upload(sample_key: str) -> dict:
+    dataset = sample_dataset_definition(sample_key)
+    file_path = sample_dataset_path(dataset["filename"])
+    if not file_path.exists():
+        raise AnalysisError(f"The sample dataset '{dataset['filename']}' is not available in this build.")
+
+    return build_upload_record(
+        file_path=file_path,
+        original_filename=dataset["filename"],
+        file_id=f"sample-{sample_key}",
+    )
+
+
+def list_sample_datasets() -> list[dict]:
+    sample_entries: list[dict] = []
+
+    for dataset in SAMPLE_DATASETS:
+        file_path = sample_dataset_path(dataset["filename"])
+        if not file_path.exists():
+            continue
+
+        extension = file_path.suffix.lower().lstrip(".")
+        sheets = scan_upload(file_path, extension)
+        preferred_sheet = dataset.get("preferred_sheet") or sheets[0]["name"]
+        preview_frame = read_dataset(file_path, extension, preferred_sheet)
+        sample_entries.append(
+            {
+                **dataset,
+                "file_type": extension,
+                "preferred_sheet": preferred_sheet,
+                "sheet_count": len(sheets),
+                "sheets": sheets,
+                "preview_columns": list(preview_frame.columns),
+                "preview_rows": build_preview_rows(preview_frame, limit=5),
+            }
+        )
+
+    return sample_entries
 
 
 def allowed_file(filename: str) -> bool:
@@ -557,12 +665,12 @@ def scan_upload(file_path: Path, file_type: str) -> list[dict]:
         dataframe = read_dataset(file_path, file_type)
         return [scan_sheet("CSV data", dataframe)]
 
-    workbook = pd.ExcelFile(file_path)
     scanned_sheets: list[dict] = []
 
-    for sheet_name in workbook.sheet_names:
-        dataframe = normalise_dataframe(pd.read_excel(file_path, sheet_name=sheet_name, nrows=200))
-        scanned_sheets.append(scan_sheet(sheet_name, dataframe))
+    with pd.ExcelFile(file_path) as workbook:
+        for sheet_name in workbook.sheet_names:
+            dataframe = normalise_dataframe(pd.read_excel(file_path, sheet_name=sheet_name, nrows=200))
+            scanned_sheets.append(scan_sheet(sheet_name, dataframe))
 
     if not scanned_sheets:
         raise AnalysisError("No worksheets were found in the uploaded workbook.")
@@ -581,16 +689,7 @@ def save_uploaded_file(file_storage) -> dict:
     stored_path = UPLOAD_DIR / stored_filename
     file_storage.save(stored_path)
 
-    sheets = scan_upload(stored_path, extension)
-    upload_record = {
-        "id": file_id,
-        "original_filename": filename,
-        "stored_filename": stored_filename,
-        "file_type": extension,
-        "sheets": sheets,
-    }
-    save_json(UPLOAD_DIR / f"{file_id}.json", upload_record)
-    return upload_record
+    return build_upload_record(stored_path, filename, file_id=file_id)
 
 
 def load_upload(upload_id: str | None) -> dict | None:
@@ -616,6 +715,9 @@ def load_analysis(analysis_id: str | None) -> dict | None:
 
 
 def get_upload_path(upload_record: dict) -> Path:
+    source_path = upload_record.get("source_path")
+    if source_path:
+        return Path(source_path)
     return UPLOAD_DIR / upload_record["stored_filename"]
 
 
@@ -2747,9 +2849,18 @@ def form_state_from_request(sheet_meta: dict, preview_frame: pd.DataFrame | None
 def index() -> str:
     ensure_storage()
     error_message: str | None = None
+    sample_datasets = list_sample_datasets()
 
     if request.method == "POST":
         action = request.form.get("action")
+
+        if action == "sample":
+            try:
+                sample_key = request.form.get("sample_key", "")
+                upload_record = load_sample_upload(sample_key)
+                return redirect(url_for("index", upload_id=upload_record["id"]))
+            except AnalysisError as exc:
+                error_message = str(exc)
 
         if action == "upload":
             try:
@@ -2832,6 +2943,7 @@ def index() -> str:
                         form_state=form_state,
                         figure_palette_options=figure_palette_options(),
                         analysis=None,
+                        sample_datasets=sample_datasets,
                     )
 
     upload_id = request.args.get("upload_id")
@@ -2871,6 +2983,7 @@ def index() -> str:
         figure_palette_options=figure_palette_options(),
         analysis=analysis_record,
         show_export_prompt=show_export_prompt,
+        sample_datasets=sample_datasets,
     )
 
 

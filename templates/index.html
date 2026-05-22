@@ -30,6 +30,58 @@
         </form>
       </section>
 
+      {% if sample_datasets %}
+      <section class="card guide-card">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Tutorial samples</p>
+            <h2>Open a bundled example workbook</h2>
+          </div>
+          <p class="subtle">Each sample includes a short explanation and preview so users can learn the workflow before uploading their own data.</p>
+        </div>
+
+        <div class="guide-grid sample-grid">
+          {% for sample in sample_datasets %}
+          <article class="sample-card">
+            <h3>{{ sample.title }}</h3>
+            <p>{{ sample.description }}</p>
+            <p class="subtle">{{ sample.tutorial_notes }}</p>
+            <p class="subtle">{{ sample.audience }}</p>
+            <p class="subtle">Preferred worksheet: {{ sample.preferred_sheet }} · Sheets: {{ sample.sheet_count }} · File: {{ sample.filename }}</p>
+            <details class="table-panel">
+              <summary>Preview sample data</summary>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      {% for column in sample.preview_columns %}
+                      <th>{{ column }}</th>
+                      {% endfor %}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in sample.preview_rows %}
+                    <tr>
+                      {% for column in sample.preview_columns %}
+                      <td>{{ row[column] if row[column] is not none else "" }}</td>
+                      {% endfor %}
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+            <form method="post" class="top-gap">
+              <input type="hidden" name="action" value="sample" />
+              <input type="hidden" name="sample_key" value="{{ sample.key }}" />
+              <button type="submit">Open {{ sample.title }}</button>
+            </form>
+          </article>
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
+
       <section class="card guide-card">
         <details class="guide-details">
           <summary>

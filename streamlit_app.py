@@ -11,7 +11,6 @@ from app import (
     ALLOWED_EXTENSIONS,
     AnalysisError,
     DEFAULT_FIGURE_PALETTE,
-    UPLOAD_DIR,
     analyse_long_dataset,
     analyse_wide_dataset,
     build_bland_altman_plot,
@@ -26,7 +25,10 @@ from app import (
     ensure_storage,
     figure_palette_options,
     figure_to_bytes,
+    get_upload_path,
     get_sheet_meta,
+    list_sample_datasets,
+    load_sample_upload,
     read_dataset,
     save_json,
     scan_upload,
@@ -203,21 +205,67 @@ def main() -> None:
         "Streamlit deployment branch for CSV/XLSX upload, ICC analysis, plots, and downloadable reports."
     )
 
-    uploaded_file = st.file_uploader("Choose a CSV or XLSX file", type=["csv", "xlsx"])
-    if not uploaded_file:
-        st.info("Upload a dataset to begin.")
+    sample_datasets = list_sample_datasets()
+    st.markdown("### Start with your own data or a tutorial sample")
+    upload_tab, tutorial_tab = st.tabs(["Upload your own file", "Use a tutorial sample"])
+
+    uploaded_file = None
+    with upload_tab:
+        uploaded_file = st.file_uploader("Choose a CSV or XLSX file", type=["csv", "xlsx"])
+
+    with tutorial_tab:
+        st.caption("The tutorial samples open real example workbooks from the repository so you can learn the wide-format and long-format workflows without preparing your own file first.")
+        for sample_dataset in sample_datasets:
+            st.markdown(f"#### {sample_dataset['title']}")
+            st.write(sample_dataset["description"])
+            st.caption(sample_dataset["tutorial_notes"])
+            st.caption(sample_dataset["audience"])
+            st.caption(
+                f"Preferred worksheet: {sample_dataset['preferred_sheet']} | Sheets: {sample_dataset['sheet_count']} | File: {sample_dataset['filename']}"
+            )
+            with st.expander(f"Preview {sample_dataset['title']}", expanded=False):
+                st.dataframe(pd.DataFrame(sample_dataset["preview_rows"]), use_container_width=True, hide_index=True)
+            if st.button(f"Use {sample_dataset['title']}", key=f"sample-{sample_dataset['key']}"):
+                st.session_state["selected_sample_key"] = sample_dataset["key"]
+                st.session_state.pop("analysis_record", None)
+                st.rerun()
+            st.divider()
+
+    upload_record = None
+    if uploaded_file is not None:
+        try:
+            upload_record = persist_uploaded_file(uploaded_file)
+            st.session_state.pop("selected_sample_key", None)
+        except AnalysisError as exc:
+            st.error(str(exc))
+            return
+    else:
+        selected_sample_key = st.session_state.get("selected_sample_key")
+        if selected_sample_key:
+            try:
+                upload_record = load_sample_upload(selected_sample_key)
+                st.session_state["upload_record"] = upload_record
+            except AnalysisError as exc:
+                st.error(str(exc))
+                return
+
+    if not upload_record:
+        st.info("Upload a dataset or choose one of the tutorial sample files to begin.")
         return
 
-    try:
-        upload_record = persist_uploaded_file(uploaded_file)
-    except AnalysisError as exc:
-        st.error(str(exc))
-        return
+    if upload_record.get("id", "").startswith("sample-"):
+        active_sample = next(
+            (sample for sample in sample_datasets if f"sample-{sample['key']}" == upload_record["id"]),
+            None,
+        )
+        if active_sample:
+            st.success(f"Tutorial sample loaded: {active_sample['title']}")
+            st.caption(active_sample["tutorial_notes"])
 
     sheet_names = [sheet["name"] for sheet in upload_record["sheets"]]
     selected_sheet = st.selectbox("Worksheet", options=sheet_names)
     sheet_meta = get_sheet_meta(upload_record, selected_sheet)
-    source_preview_frame = read_dataset(UPLOAD_DIR / upload_record["stored_filename"], upload_record["file_type"], selected_sheet)
+    source_preview_frame = read_dataset(get_upload_path(upload_record), upload_record["file_type"], selected_sheet)
 
     with st.expander("Preview data", expanded=False):
         st.dataframe(source_preview_frame.head(12), use_container_width=True)
