@@ -7,6 +7,7 @@ Current build includes:
 - CSV and XLSX upload
 - worksheet scanning and column heading discovery
 - wide-format column selection for reliability analysis
+- Streamlit long-format mapping workflow with detected layout summary and wide/long override
 - multiple guessed Test 1 / Test 2 pair selection in one run
 - optional pre-upload user guide on the landing page
 - ICC suggestion and calculation
@@ -122,7 +123,36 @@ Notes:
 - if the Flask and Streamlit versions diverge substantially over time, splitting them into separate repositories may become cleaner later
 - minimum detectable change is reported as `Typical error × 1.96 × √2`, with typical error defined as `SD(differences) / √2`
 - report downloads now include HTML as well as PDF and DOCX
-- upload scanning now includes an initial wide-vs-long structure detection pass in metadata, though the full long-format analysis workflow is still in progress
+- upload scanning includes a wide-vs-long structure detection pass in metadata
+- the Streamlit workflow now uses that detection to suggest Wide or Long layout, while still allowing a manual override
+- long-format Streamlit analysis maps observation ID, measurement name, repeated-measure level, and score columns before analysis
+- clean long-format workbook example: `All Metrics Cleaned_Smaller_Long.xlsx` should now enter the long-format workflow instead of the wide pair-builder
+- Flask and Jinja UI parity for the long-format workflow is still pending; the active Streamlit deployment path is the most up-to-date interface
+
+## Streamlit long-format workflow
+
+When the uploaded sheet looks like long-format data, the Streamlit app now:
+
+1. shows a detected layout summary with the reasons used by the scanner
+2. lets you confirm `Wide format` or `Long format`
+3. for long-format data, asks you to map the observation ID, measurement name, repeated-measure level, and score columns
+4. lets you choose which measurement names to analyse
+5. lets you choose the two repeated-measure levels to compare, such as `Test 1` and `Test 2`
+
+This prevents long-format sheets from being treated as wide-format numeric column pairs.
+
+## Streamlit redeploy
+
+The Streamlit deployment is driven from the `streamlit-deploy` branch. After pushing updates to GitHub, redeploy in Streamlit Community Cloud by either:
+
+- using the app's `Reboot app` or `Redeploy` action in the Streamlit dashboard, or
+- making sure the deployed app is pointed at the latest commit on `streamlit-deploy` and allowing auto-deploy to pick up the push
+
+Local pre-push check:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest tests.test_app
+```
 
 ## Build a Windows standalone app
 

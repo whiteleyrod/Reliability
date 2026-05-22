@@ -13,9 +13,12 @@ This plan now also serves as an implementation record.
 - Uploaded data preview in the browser
 - Automatic detection of likely `Test 1` / `Test 2` reliability pairs
 - Initial worksheet-level wide-vs-long structure detection metadata
+- Streamlit layout selector with detected wide/long summary and manual override
 - Clean pair-selection interface with support for multiple selected pairs in one run
 - Manual X/Y fallback when no detected pair is selected
 - Observation identifier selection
+- Streamlit long-format mapping for observation ID, measurement name, repeated-measure level, and score columns
+- Streamlit long-format analysis path for selected measurements and repeated-measure level comparisons
 - ICC design, agreement, and measurement-unit selection
 - ICC recommendation rationale shown in plain language
 - Tooltip guidance for study design, agreement target, and measurement unit choices
@@ -46,7 +49,7 @@ This plan now also serves as an implementation record.
 
 ### Partially implemented or still open
 
-- Long-format data mapping is not yet implemented as a full workflow, though initial wide-vs-long structure detection has now started
+- Flask and Jinja parity for the new long-format workflow is still open; Streamlit now supports the detected long-format path
 - Missing-data handling is currently drop-complete-cases per selected pair, with reporting but limited user options
 - Automated test coverage is still limited, though a basic CI workflow now runs helper and plotting smoke tests
 - Interpretation guidance is present in a limited form and could be expanded
@@ -129,7 +132,8 @@ Implementation status:
 - Wide-format workflow: implemented
 - Auto-detected `Test 1` / `Test 2` pair workflow: implemented
 - Multiple-pair workflow: implemented
-- Long-format workflow: planned, not yet implemented
+- Streamlit long-format workflow: implemented
+- Flask long-format workflow: not yet implemented
 
 ### 3.3 ICC Recommendation Engine
 
@@ -245,7 +249,8 @@ Status:
 - worksheet preview and pair selection: implemented
 - subject-column selection: implemented
 - multi-pair selection: implemented
-- full long-format mapping: not yet implemented
+- Streamlit long-format mapping: implemented
+- Flask long-format mapping: not yet implemented
 
 ### 6.3 ICC Decision Module
 
