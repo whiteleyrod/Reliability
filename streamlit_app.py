@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
+import math
+import statistics
 from pathlib import Path
 from uuid import uuid4
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
+from scipy import stats as scipy_stats
 
 from app import (
     ALLOWED_EXTENSIONS,
@@ -124,6 +129,102 @@ def default_pair_selections(sheet_meta: dict, analysis_record: dict | None = Non
     return []
 
 
+def run_correlation_fragility(x_values: list, y_values: list, n: int) -> dict:
+    """Exhaustively test every combination of n replacements to find the worst-case p-value."""
+    data = list(zip(x_values, y_values))
+    med_x = statistics.median(x_values)
+    med_y = statistics.median(y_values)
+    median_point = (med_x, med_y)
+    orig_r, orig_p = scipy_stats.pearsonr(x_values, y_values)
+    replacement_candidates = list(itertools.combinations(data, n))
+
+    p2values: list[float] = []
+    r2values: list[float] = []
+    for combo in replacement_candidates:
+        temp = list(data)
+        for point in combo:
+            temp.remove(point)
+        for _ in range(n):
+            temp.append(median_point)
+        rx = [pt[0] for pt in temp]
+        ry = [pt[1] for pt in temp]
+        try:
+            r2, p2 = scipy_stats.pearsonr(rx, ry)
+        except Exception:
+            r2, p2 = float("nan"), 1.0
+        p2values.append(p2)
+        r2values.append(r2)
+
+    maxpos = p2values.index(max(p2values))
+    return {
+        "r2values": r2values,
+        "p2values": p2values,
+        "replacement_candidates": replacement_candidates,
+        "maxpos": maxpos,
+        "original_r": orig_r,
+        "original_p": orig_p,
+        "median_x": med_x,
+        "median_y": med_y,
+        "n": n,
+    }
+
+
+def build_fragility_line_chart(fragility_result: dict):
+    r2values = fragility_result["r2values"]
+    p2values = fragility_result["p2values"]
+    orig_r = fragility_result["original_r"]
+    orig_p = fragility_result["original_p"]
+
+    fig, ax1 = plt.subplots(figsize=(8, 4))
+    color_r = "tab:red"
+    color_p = "tab:blue"
+
+    ax1.set_xlabel("Combination number", fontsize=9)
+    ax1.set_ylabel("Pearson r", color=color_r)
+    ax1.set_ylim(-1, 1)
+    ax1.plot(range(len(r2values)), r2values, color=color_r, linewidth=0.8, label=f"fragile r")
+    ax1.axhline(orig_r, linestyle="dotted", color=color_r, label=f"original r = {orig_r:.3f}")
+    ax1.tick_params(axis="y", labelcolor=color_r)
+
+    ax2 = ax1.twinx()
+    ax2.set_ylabel("p value", color=color_p)
+    ax2.plot(range(len(p2values)), p2values, color=color_p, linewidth=0.8, label="fragile p")
+    ax2.axhline(orig_p, linestyle="dotted", color=color_p, label=f"original p = {orig_p:.4f}")
+    ax2.axhline(0.05, linestyle="dashed", color="gray", linewidth=0.8, label="p = 0.05 threshold")
+    ax2.tick_params(axis="y", labelcolor=color_p)
+
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=7, loc="upper left")
+
+    plt.tight_layout()
+    return fig
+
+
+def build_fragility_scatter(x_values: list, y_values: list, fragility_result: dict):
+    maxpos = fragility_result["maxpos"]
+    worst_combo = fragility_result["replacement_candidates"][maxpos]
+    n = fragility_result["n"]
+    med_x = fragility_result["median_x"]
+    med_y = fragility_result["median_y"]
+    max_p = max(fragility_result["p2values"])
+    worst_r = fragility_result["r2values"][maxpos]
+
+    x_replaced = [pt[0] for pt in worst_combo]
+    y_replaced = [pt[1] for pt in worst_combo]
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.scatter(x_values, y_values, alpha=0.7, label="Original data")
+    ax.scatter(x_replaced, y_replaced, color="red", zorder=5, label=f"Point{'s' if n > 1 else ''} to replace (n={n})")
+    ax.scatter(med_x, med_y, color="orange", marker="*", s=150, zorder=6, label="Median (replacement target)")
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_title(f"Worst-case: r = {worst_r:.3f}, p = {max_p:.4f}", fontsize=9)
+    ax.legend(fontsize=8)
+    plt.tight_layout()
+    return fig
+
+
 def render_pair_section(upload_record: dict, analysis_record: dict, pair_result: dict) -> None:
     st.subheader(pair_result["pair_label"])
     figure_palette = analysis_record["config"].get("figure_palette", DEFAULT_FIGURE_PALETTE)
@@ -196,6 +297,126 @@ def render_pair_section(upload_record: dict, analysis_record: dict, pair_result:
 
     with st.expander("Source data used for this pair", expanded=False):
         st.dataframe(pair_source_frame, use_container_width=True)
+
+    # --- Correlation Fragility ---
+    st.markdown("#### Correlation Fragility")
+    with st.expander("What is correlation fragility?", expanded=False):
+        st.markdown(
+            """
+**Correlation fragility** asks a simple but important question: *how many data points need to change
+before a statistically significant correlation disappears?*
+
+The analysis works by exhaustively testing every possible combination of **n** data points.
+For each combination, those points are temporarily replaced with the dataset median (the middle X value
+and the middle Y value) and the Pearson correlation is recalculated.
+The combination that produces the highest — least significant — p-value is reported as the worst case.
+
+---
+
+**How to use this tool**
+
+1. After running a reliability analysis, scroll to the *Correlation Fragility* section for any pair.
+2. Choose **n** — the number of simultaneous replacements to test. Start with n = 1; increase to n = 2 or 3
+   if the correlation survives a single replacement comfortably.
+3. Check the combination count shown below the selector. Counts above ~10,000 will be slow;
+   reduce n or accept the wait.
+4. Click **Run Correlation Fragility** to start the exhaustive search.
+
+---
+
+**Interpreting the results**
+
+| Finding | Implication |
+|---|---|
+| Worst-case p remains < 0.05 even for n = 2 or 3 | The correlation is **robust** — it survives multiple replacements and is unlikely to be driven by a handful of influential points. |
+| Worst-case p ≥ 0.05 for n = 1 | The correlation is **highly fragile** — a single data point is keeping it statistically significant. Treat the original result with caution. |
+| Worst-case p ≥ 0.05 for small n (e.g. 2–3 in a dataset of 30+) | The correlation is **moderately fragile**. Consider whether the flagged points are genuine observations or measurement artefacts. |
+
+A fragile correlation does not mean the relationship is false, but it does mean the statistical
+significance rests on a small number of observations. In a reliability context this is important:
+if the ICC is supported by a significant Pearson correlation, and that correlation is fragile, the
+reliability estimate may not generalise well to a larger or more varied sample.
+
+---
+
+*The method used here is described in: Lakens, D. (2014). Performing high-powered studies efficiently
+with sequential analyses. European Journal of Social Psychology, 44(7), 701–710, and popularised by
+the correlation fragility index approach of Voracek et al.*
+"""
+        )
+
+    pair_key = pair_result["pair_key"]
+    frag_state_key = f"frag-{pair_key}"
+
+    x_vals = pair_frame[pair_result["primary_x_column"]].dropna().tolist()
+    y_vals = pair_frame[pair_result["primary_y_column"]].dropna().tolist()
+    row_count = len(x_vals)
+
+    if row_count < 3:
+        st.info("At least 3 data points are required for correlation fragility analysis.")
+    else:
+        orig_r, orig_p = scipy_stats.pearsonr(x_vals, y_vals)
+        if orig_p >= 0.05:
+            st.warning(
+                f"The original correlation for this pair is not statistically significant "
+                f"(r = {orig_r:.3f}, p = {orig_p:.4f}). "
+                "Fragility analysis is most meaningful when the correlation is significant."
+            )
+
+        n_replacements = int(
+            st.number_input(
+                "Number of replacements (n)",
+                min_value=1,
+                max_value=min(5, row_count - 2),
+                value=1,
+                step=1,
+                key=f"{frag_state_key}-n",
+                help=(
+                    "How many data points to simultaneously replace with the X/Y median. "
+                    "Increasing n tests larger combinations but grows computation time rapidly."
+                ),
+            )
+        )
+
+        combo_count = math.comb(row_count, n_replacements)
+        st.caption(f"{row_count} data points → {combo_count:,} combinations to test (n = {n_replacements}).")
+
+        COMBO_WARN_THRESHOLD = 10_000
+        if combo_count > COMBO_WARN_THRESHOLD:
+            st.warning(
+                f"This will test {combo_count:,} combinations, which may be slow. "
+                "Consider reducing n."
+            )
+
+        if st.button("Run Correlation Fragility", key=f"{frag_state_key}-btn"):
+            with st.spinner(f"Testing {combo_count:,} combinations…"):
+                frag_result = run_correlation_fragility(x_vals, y_vals, n_replacements)
+            st.session_state[frag_state_key] = frag_result
+
+        frag_result = st.session_state.get(frag_state_key)
+        if frag_result and frag_result.get("n") == n_replacements:
+            max_p = max(frag_result["p2values"])
+            worst_r = frag_result["r2values"][frag_result["maxpos"]]
+            worst_combo = frag_result["replacement_candidates"][frag_result["maxpos"]]
+
+            frag_metric_cols = st.columns(4)
+            frag_metric_cols[0].metric("Original r", f"{frag_result['original_r']:.4f}")
+            frag_metric_cols[1].metric("Original p", f"{frag_result['original_p']:.4f}")
+            frag_metric_cols[2].metric(f"Worst-case r (n={n_replacements})", f"{worst_r:.4f}")
+            frag_metric_cols[3].metric(f"Worst-case p (n={n_replacements})", f"{max_p:.4f}")
+
+            replaced_str = ", ".join(f"({pt[0]:.3g}, {pt[1]:.3g})" for pt in worst_combo)
+            st.caption(
+                f"Replacing {n_replacements} point(s) — {replaced_str} — with the median "
+                f"({frag_result['median_x']:.3g}, {frag_result['median_y']:.3g}) "
+                f"achieves the maximum p-value of {max_p:.4f}."
+            )
+
+            frag_col1, frag_col2 = st.columns(2)
+            with frag_col1:
+                st.pyplot(build_fragility_line_chart(frag_result), use_container_width=True)
+            with frag_col2:
+                st.pyplot(build_fragility_scatter(x_vals, y_vals, frag_result), use_container_width=True)
 
 
 def main() -> None:
