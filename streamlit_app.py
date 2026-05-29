@@ -16,6 +16,7 @@ from app import (
     ALLOWED_EXTENSIONS,
     AnalysisError,
     DEFAULT_FIGURE_PALETTE,
+    UPLOAD_DIR,
     analyse_long_dataset,
     analyse_wide_dataset,
     build_bland_altman_plot,
