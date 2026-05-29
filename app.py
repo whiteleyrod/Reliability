@@ -306,13 +306,43 @@ def normalise_dataframe(dataframe: pd.DataFrame) -> pd.DataFrame:
     return cleaned
 
 
-def read_csv_file(file_path: Path) -> pd.DataFrame:
+def _csv_is_headerless(file_path: Path, encoding: str) -> bool:
+    """Return True if the first row of the CSV contains only numeric values (no header)."""
+    try:
+        first_row = pd.read_csv(file_path, header=None, nrows=1, encoding=encoding)
+        return all(
+            _value_is_numeric(str(v)) for v in first_row.iloc[0]
+        )
+    except Exception:
+        return False
+
+
+def _value_is_numeric(s: str) -> bool:
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
+def read_csv_file(file_path: Path) -> tuple[pd.DataFrame, bool]:
+    """Read a CSV, auto-detecting header presence.
+
+    Returns a (DataFrame, headerless) tuple.
+    When no header row is detected the columns are renamed to 'Column 1', 'Column 2', etc.
+    """
     encodings = ("utf-8-sig", "utf-8", "cp1252", "latin-1")
     last_error: UnicodeDecodeError | None = None
 
     for encoding in encodings:
         try:
-            return pd.read_csv(file_path, encoding=encoding)
+            headerless = _csv_is_headerless(file_path, encoding)
+            if headerless:
+                df = pd.read_csv(file_path, header=None, encoding=encoding)
+                df.columns = [f"Column {i + 1}" for i in range(df.shape[1])]
+            else:
+                df = pd.read_csv(file_path, encoding=encoding)
+            return df, headerless
         except UnicodeDecodeError as exc:
             last_error = exc
 
@@ -324,7 +354,8 @@ def read_csv_file(file_path: Path) -> pd.DataFrame:
 
 def read_dataset(file_path: Path, file_type: str, sheet_name: str | None = None) -> pd.DataFrame:
     if file_type == "csv":
-        return normalise_dataframe(read_csv_file(file_path))
+        df, _headerless = read_csv_file(file_path)
+        return normalise_dataframe(df)
 
     if not sheet_name:
         raise AnalysisError("Select a worksheet before continuing.")
@@ -612,7 +643,7 @@ def build_long_measurement_options(dataframe: pd.DataFrame, measurement_column: 
     return sorted(options)
 
 
-def scan_sheet(name: str, dataframe: pd.DataFrame) -> dict:
+def scan_sheet(name: str, dataframe: pd.DataFrame, headerless: bool = False) -> dict:
     numeric_columns = [
         column
         for column in dataframe.columns
@@ -629,6 +660,7 @@ def scan_sheet(name: str, dataframe: pd.DataFrame) -> dict:
         "numeric_columns": numeric_columns,
         "detected_pairs": detected_pairs,
         "structure_detection": structure_detection,
+        "headerless": headerless,
     }
 
 
@@ -662,8 +694,9 @@ def detect_reliability_pairs(columns: list[str]) -> list[dict]:
 
 def scan_upload(file_path: Path, file_type: str) -> list[dict]:
     if file_type == "csv":
-        dataframe = read_dataset(file_path, file_type)
-        return [scan_sheet("CSV data", dataframe)]
+        raw_df, headerless = read_csv_file(file_path)
+        dataframe = normalise_dataframe(raw_df)
+        return [scan_sheet("CSV data", dataframe, headerless=headerless)]
 
     scanned_sheets: list[dict] = []
 

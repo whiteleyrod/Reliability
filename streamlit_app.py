@@ -508,6 +508,15 @@ def main() -> None:
     saved_data_format = analysis_record["config"].get("data_format") if analysis_record else None
     selected_data_format = saved_data_format or ("long" if suggested_format == "long" else "wide")
 
+    headerless = sheet_meta.get("headerless", False)
+    if headerless:
+        st.info(
+            "**No column headers detected.** "
+            "This file appears to have no header row — all values in the first row are numeric. "
+            "Columns have been automatically named **Column 1**, **Column 2**, etc. "
+            "There is no participant ID column available; row numbers will be used instead."
+        )
+
     detection_label = {
         "wide": "Wide format detected",
         "long": "Long format detected",
@@ -690,17 +699,21 @@ def main() -> None:
 
     with st.form("analysis-form"):
         if selected_data_format == "wide":
-            subject_options = [""] + sheet_meta["columns"]
-            subject_column = st.selectbox(
-                "Observation ID column",
-                options=subject_options,
-                help=(
-                    "Choose the column that identifies each person, item, or case. "
-                    "This helps the app keep each row matched correctly across repeated measurements. "
-                    "If your file does not have an ID column, use generated row labels."
-                ),
-                format_func=lambda value: "Use generated row labels" if value == "" else value,
-            )
+            if headerless:
+                st.caption("No participant ID column — row numbers will be used as observation labels.")
+                subject_column = ""
+            else:
+                subject_options = [""] + sheet_meta["columns"]
+                subject_column = st.selectbox(
+                    "Observation ID column",
+                    options=subject_options,
+                    help=(
+                        "Choose the column that identifies each person, item, or case. "
+                        "This helps the app keep each row matched correctly across repeated measurements. "
+                        "If your file does not have an ID column, use generated row labels."
+                    ),
+                    format_func=lambda value: "Use generated row labels" if value == "" else value,
+                )
 
             st.markdown("**Pairs to analyse**")
             st.caption("Pick the exact column headers you want to compare. Each row below runs as a separate analysis.")
