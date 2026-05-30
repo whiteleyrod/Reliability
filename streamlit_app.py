@@ -45,6 +45,16 @@ st.set_page_config(
     layout="wide",
 )
 
+
+@st.cache_data(show_spinner=False)
+def _cached_build_reports(analysis_id: str, _upload_record: dict, _analysis_record: dict) -> tuple[bytes, bytes, bytes, bytes]:
+    """Generate all four downloadable reports, cached by analysis ID so they are only built once."""
+    source_csv = build_source_data_export_frame(_upload_record, _analysis_record).to_csv(index=False).encode("utf-8")
+    html_bytes = build_html_report(_analysis_record).encode("utf-8")
+    pdf_bytes = build_pdf_report(_analysis_record)
+    docx_bytes = build_docx_report(_analysis_record)
+    return source_csv, html_bytes, pdf_bytes, docx_bytes
+
 STUDY_DESIGN_OPTIONS = {
     "One-way random": "one_way_random",
     "Two-way random": "two_way_random",
@@ -864,39 +874,49 @@ def main() -> None:
 
     st.success(analysis_record["recommendation"]["rationale"])
 
-    source_csv = build_source_data_export_frame(upload_record, analysis_record).to_csv(index=False).encode("utf-8")
-    html_bytes = build_html_report(analysis_record).encode("utf-8")
-    pdf_bytes = build_pdf_report(analysis_record)
-    docx_bytes = build_docx_report(analysis_record)
+    try:
+        source_csv, html_bytes, pdf_bytes, docx_bytes = _cached_build_reports(
+            analysis_record["id"], upload_record, analysis_record
+        )
+    except Exception as exc:
+        st.error(f"Report generation failed: {exc}")
+        source_csv = html_bytes = pdf_bytes = docx_bytes = None
 
     download_column_1, download_column_2, download_column_3, download_column_4 = st.columns(4)
-    download_column_1.download_button(
-        "Download analysed source data (CSV)",
-        data=source_csv,
-        file_name="reliability-source-data.csv",
-        mime="text/csv",
-    )
-    download_column_2.download_button(
-        "Download results report (PDF)",
-        data=pdf_bytes,
-        file_name="reliability-results.pdf",
-        mime="application/pdf",
-    )
-    download_column_3.download_button(
-        "Download results report (DOCX)",
-        data=docx_bytes,
-        file_name="reliability-results.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    )
-    download_column_4.download_button(
-        "Download results report (HTML)",
-        data=html_bytes,
-        file_name="reliability-results.html",
-        mime="text/html",
-    )
+    if source_csv is not None:
+        download_column_1.download_button(
+            "Download analysed source data (CSV)",
+            data=source_csv,
+            file_name="reliability-source-data.csv",
+            mime="text/csv",
+        )
+    if pdf_bytes is not None:
+        download_column_2.download_button(
+            "Download results report (PDF)",
+            data=pdf_bytes,
+            file_name="reliability-results.pdf",
+            mime="application/pdf",
+        )
+    if docx_bytes is not None:
+        download_column_3.download_button(
+            "Download results report (DOCX)",
+            data=docx_bytes,
+            file_name="reliability-results.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+    if html_bytes is not None:
+        download_column_4.download_button(
+            "Download results report (HTML)",
+            data=html_bytes,
+            file_name="reliability-results.html",
+            mime="text/html",
+        )
 
     for pair_result in analysis_record["pair_results"]:
-        render_pair_section(upload_record, analysis_record, pair_result)
+        try:
+            render_pair_section(upload_record, analysis_record, pair_result)
+        except Exception as exc:
+            st.error(f"Could not render pair '{pair_result.get('pair_label', '?')}': {exc}")
         st.divider()
 
 
