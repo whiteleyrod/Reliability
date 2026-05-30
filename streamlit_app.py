@@ -526,14 +526,22 @@ def main() -> None:
     for reason in structure_detection.get("reasons", []):
         st.caption(reason)
 
-    selected_data_format = st.radio(
-        "Data layout",
-        options=["wide", "long"],
-        index=0 if selected_data_format == "wide" else 1,
-        format_func=lambda value: "Wide format" if value == "wide" else "Long format",
-        help="Confirm whether your data is arranged with one column per repeated measurement or with one row per observation-measurement combination.",
-        horizontal=True,
-    )
+    long_format_possible = len(numeric_columns) >= 2 and len(sheet_meta.get("columns", [])) >= 4
+    if not long_format_possible:
+        selected_data_format = "wide"
+        st.caption(
+            "Long format requires at least 4 columns (subject ID, measurement name, "
+            "repeated-measure level, and score). This file will be analysed as wide format."
+        )
+    else:
+        selected_data_format = st.radio(
+            "Data layout",
+            options=["wide", "long"],
+            index=0 if selected_data_format == "wide" else 1,
+            format_func=lambda value: "Wide format" if value == "wide" else "Long format",
+            help="Confirm whether your data is arranged with one column per repeated measurement or with one row per observation-measurement combination.",
+            horizontal=True,
+        )
 
     detected_pairs = sheet_meta.get("detected_pairs", [])
     default_pair_rows = default_pair_selections(sheet_meta, analysis_record)

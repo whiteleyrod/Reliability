@@ -391,6 +391,28 @@ def detect_dataset_structure(dataframe: pd.DataFrame) -> dict:
     numeric_columns = [profile["name"] for profile in profiles if profile["is_numeric"]]
     detected_pairs = detect_reliability_pairs(numeric_columns)
 
+    # A file with fewer than 4 columns cannot support long format (which requires distinct
+    # subject, measurement-name, repeated-measure level, and score columns).  Short-circuit
+    # immediately so the heuristic scoring below cannot accidentally classify it as long.
+    if column_count < 4:
+        reasons: list[str] = []
+        if column_count == 2 and len(numeric_columns) == 2:
+            reasons = ["Two numeric columns detected — treated as a pairwise wide-format comparison."]
+        elif column_count < 4:
+            reasons = [f"Only {column_count} column(s) present; long format requires at least 4 distinct columns."]
+        measurement_columns_for_wide = numeric_columns
+        return {
+            "format": "wide",
+            "confidence": 1.0,
+            "wide_score": 10,
+            "long_score": 0,
+            "reasons": reasons,
+            "suggested_columns": {
+                "wide": {"subject_column": None, "measurement_columns": measurement_columns_for_wide},
+                "long": {"subject_column": None, "rater_column": None, "measurement_column": None, "score_column": None},
+            },
+        }
+
     subject_keywords = ("subject", "participant", "observation", "athlete", "id")
     rater_keywords = ("rater", "test", "session", "occasion", "trial", "repeat", "visit")
     score_keywords = ("score", "value", "result", "measurement", "reading")
