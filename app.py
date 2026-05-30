@@ -686,6 +686,23 @@ def scan_sheet(name: str, dataframe: pd.DataFrame, headerless: bool = False) -> 
     }
 
 
+def _normalise_pair_key(label: str) -> str:
+    """Return a normalised version of a pair label used for fuzzy rescue matching.
+
+    Collapses common abbreviation variants (e.g. UNV vs UNINV) so that column
+    pairs whose Test 1 / Test 2 labels differ only by these variants can still
+    be matched after the exact-match pass.
+    """
+    s = label.casefold()
+    # Normalise uninvolved-limb prefix variants: unv → uninv when bounded by _ or start/end
+    # (underscore counts as \w so \b won't fire — use explicit look-around instead)
+    s = re.sub(r"(?:(?<=_)|^)unv(?=_|$)", "uninv", s)
+    s = re.sub(r"(?:(?<=_)|^)un_inv(?=_|$)", "uninv", s)
+    # Collapse multiple underscores / spaces
+    s = re.sub(r"[\s_]+", "_", s).strip("_")
+    return s
+
+
 def detect_reliability_pairs(columns: list[str]) -> list[dict]:
     pair_map: dict[str, dict] = {}
 
@@ -705,7 +722,21 @@ def detect_reliability_pairs(columns: list[str]) -> list[dict]:
                 "test_2": None,
             },
         )
-        pair_entry[f"test_{match.group('test')}"] = column
+        pair_entry["test_" + match.group("test")] = column
+
+    # ── Rescue pass: try to merge orphaned half-pairs using normalised keys ──
+    orphan_test1 = {k: v for k, v in pair_map.items() if v["test_1"] and not v["test_2"]}
+    orphan_test2 = {k: v for k, v in pair_map.items() if v["test_2"] and not v["test_1"]}
+
+    norm_to_key1: dict[str, str] = {_normalise_pair_key(v["label"]): k for k, v in orphan_test1.items()}
+
+    for key2, entry2 in list(orphan_test2.items()):
+        norm2 = _normalise_pair_key(entry2["label"])
+        key1 = norm_to_key1.get(norm2)
+        if key1 and key1 in pair_map and key2 in pair_map:
+            # Merge: give the test_2 column to the test_1 entry and drop the orphan
+            pair_map[key1]["test_2"] = entry2["test_2"]
+            del pair_map[key2]
 
     detected_pairs = [
         pair for pair in pair_map.values() if pair["test_1"] is not None and pair["test_2"] is not None

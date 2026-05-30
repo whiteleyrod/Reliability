@@ -114,7 +114,7 @@ def default_pair_selections(sheet_meta: dict, analysis_record: dict | None = Non
                 "primary_x_column": pair["test_1"],
                 "primary_y_column": pair["test_2"],
             }
-            for pair in detected_pairs[: min(3, len(detected_pairs))]
+            for pair in detected_pairs
         ]
 
     numeric_columns = sheet_meta.get("numeric_columns", [])
@@ -605,7 +605,7 @@ def main() -> None:
         pair_count = st.number_input(
             "Number of analysis pairs",
             min_value=1,
-            max_value=min(12, max(1, len(numeric_columns) * (len(numeric_columns) - 1))),
+            max_value=min(100, max(1, len(numeric_columns) * (len(numeric_columns) - 1))),
             value=max(1, len(default_pair_rows)),
             step=1,
             help=(
