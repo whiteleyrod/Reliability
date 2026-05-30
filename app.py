@@ -853,6 +853,16 @@ def format_fixed_decimal(value: object, digits: int = 3) -> str:
     return f"{float(value):.{digits}f}"
 
 
+def format_p_value(value: object) -> str:
+    """Format a p-value to 4 decimal places, or '<0.0001' when very small."""
+    if value is None or pd.isna(value):
+        return "—"
+    v = float(value)
+    if v < 0.0001:
+        return "<0.0001"
+    return f"{v:.4f}"
+
+
 def icc_estimate_display(icc_result: dict) -> str:
     return str(icc_result.get("estimate_display") or format_fixed_decimal(icc_result.get("estimate"), digits=3))
 
@@ -2015,7 +2025,7 @@ def build_pdf_report(analysis_record: dict) -> bytes:
                 Paragraph(f"ICC estimate: {icc_estimate_display(pair_result['icc_result'])}", styles["Normal"]),
                 Paragraph(f"95% CI: {icc_ci_display(pair_result['icc_result'])}", styles["Normal"]),
                 Paragraph(f"F value: {pair_result['icc_result']['f_value']}", styles["Normal"]),
-                Paragraph(f"P value: {pair_result['icc_result']['p_value']}", styles["Normal"]),
+                Paragraph(f"P value: {format_p_value(pair_result['icc_result']['p_value'])}", styles["Normal"]),
                 Paragraph(f"Description: {pair_result['icc_result']['description']}", styles["Normal"]),
                 Paragraph(f"Complete observations analysed: {pair_result['dataset_summary']['observations']}", styles["Normal"]),
                 Paragraph(f"Dropped rows due to missing values: {pair_result['dataset_summary']['dropped_rows']}", styles["Normal"]),
@@ -2121,7 +2131,7 @@ def build_docx_report(analysis_record: dict) -> bytes:
         document.add_paragraph(f"ICC estimate: {icc_estimate_display(pair_result['icc_result'])}")
         document.add_paragraph(f"95% CI: {icc_ci_display(pair_result['icc_result'])}")
         document.add_paragraph(f"F value: {pair_result['icc_result']['f_value']}")
-        document.add_paragraph(f"P value: {pair_result['icc_result']['p_value']}")
+        document.add_paragraph(f"P value: {format_p_value(pair_result['icc_result']['p_value'])}")
         document.add_paragraph(f"Description: {pair_result['icc_result']['description']}")
         document.add_paragraph(f"Complete observations analysed: {pair_result['dataset_summary']['observations']}")
         document.add_paragraph(f"Dropped rows due to missing values: {pair_result['dataset_summary']['dropped_rows']}")
@@ -2275,7 +2285,7 @@ def build_markdown_report(analysis_record: dict, base_url: str | None = None) ->
                 f"- ICC estimate: {icc_estimate_display(pair_result['icc_result'])}",
                 f"- 95% CI: {icc_ci_display(pair_result['icc_result'])}",
                 f"- F value: {pair_result['icc_result']['f_value']}",
-                f"- P value: {pair_result['icc_result']['p_value']}",
+                f"- P value: {format_p_value(pair_result['icc_result']['p_value'])}",
                 f"- Description: {pair_result['icc_result']['description']}",
                 f"- Complete observations analysed: {pair_result['dataset_summary']['observations']}",
                 f"- Dropped rows due to missing values: {pair_result['dataset_summary']['dropped_rows']}",
@@ -2439,7 +2449,7 @@ def build_html_report(analysis_record: dict, base_url: str | None = None) -> str
                 f"      <li>ICC estimate: {icc_estimate_display(pair_result['icc_result'])}</li>",
                 f"      <li>95% CI: {icc_ci_display(pair_result['icc_result'])}</li>",
                 f"      <li>F value: {pair_result['icc_result']['f_value']}</li>",
-                f"      <li>P value: {pair_result['icc_result']['p_value']}</li>",
+                f"      <li>P value: {format_p_value(pair_result['icc_result']['p_value'])}</li>",
                 f"      <li>Description: {html.escape(pair_result['icc_result']['description'])}</li>",
                 f"      <li>Complete observations analysed: {pair_result['dataset_summary']['observations']}</li>",
                 f"      <li>Dropped rows due to missing values: {pair_result['dataset_summary']['dropped_rows']}</li>",
