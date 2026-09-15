@@ -32,6 +32,7 @@ This plan now also serves as an implementation record.
 - Typical error, minimum detectable change (95%), bias, and limits of agreement calculations
 - Square scatter plots with `y = x`
 - Bland-Altman plots centred symmetrically around `0`
+- Bland-Altman least-squares regression summaries and regression plots with shaded 95% fitted-mean confidence bands
 - SVG preview and SVG/PDF figure download routes
 - HTML report export including data, methods, results, and figures
 - PDF report export including data, methods, results, and figures

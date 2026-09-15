@@ -20,6 +20,8 @@ from app import (
     analyse_long_dataset,
     analyse_wide_dataset,
     build_bland_altman_plot,
+    build_bland_altman_regression_plot,
+    build_bland_altman_regression_summary,
     build_long_measurement_options,
     build_palette_preview_frame,
     build_docx_report,
@@ -274,20 +276,7 @@ def render_pair_section(upload_record: dict, analysis_record: dict, pair_result:
 
     regression = pair_result.get("bland_altman_regression")
     if regression:
-        regression_frame = pd.DataFrame(
-            [
-                {
-                    "Slope": regression["slope"],
-                    "Intercept": regression["intercept"],
-                    "R²": regression["r_squared"],
-                    "P value": regression["p_value"],
-                    "SE": regression["standard_error"],
-                    "95% CI lower": regression["ci_lower"],
-                    "95% CI upper": regression["ci_upper"],
-                    "Formula": regression["formula"],
-                }
-            ]
-        )
+        regression_frame = build_bland_altman_regression_summary(pair_result)
         st.markdown("#### Least-squares regression of Bland-Altman data")
         st.dataframe(regression_frame, use_container_width=True)
 
@@ -323,6 +312,23 @@ def render_pair_section(upload_record: dict, analysis_record: dict, pair_result:
             file_name=f"bland-altman-{pair_result['pair_key']}.svg",
             mime="image/svg+xml",
             key=f"bland-{pair_result['pair_key']}",
+        )
+
+    if regression:
+        regression_bland_figure = build_bland_altman_regression_plot(
+            pair_frame,
+            pair_result["primary_x_column"],
+            pair_result["primary_y_column"],
+            figure_palette,
+        )
+        st.pyplot(regression_bland_figure, use_container_width=True)
+        regression_bland_svg = figure_to_bytes(regression_bland_figure, "svg")
+        st.download_button(
+            f"Download {pair_result['pair_label']} Bland-Altman regression SVG",
+            data=regression_bland_svg,
+            file_name=f"bland-altman-regression-{pair_result['pair_key']}.svg",
+            mime="image/svg+xml",
+            key=f"bland-regression-{pair_result['pair_key']}",
         )
 
     with st.expander("Source data used for this pair", expanded=False):

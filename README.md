@@ -18,6 +18,8 @@ Current build includes:
 - typical error, minimum detectable change (95%), bias, and limits of agreement
 - square scatter plots with a `y = x` reference line plus shaded 95% confidence intervals around the line of best fit
 - Bland-Altman plots centered symmetrically around 0 on the y-axis
+- second Bland-Altman regression plots with least-squares overlays and shaded 95% fitted-mean confidence bands
+- least-squares Bland-Altman regression summaries in the Streamlit view and exported reports
 - SVG preview and SVG/PDF download routes
 - single HTML report export with analysed data first, analysis description, package list, commands used, results, and figures
 - single PDF report export with analysed data first, analysis description, package list, commands used, results, and figures

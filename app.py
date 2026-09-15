@@ -1087,6 +1087,27 @@ def build_bland_altman_regression(dataframe: pd.DataFrame, x_column: str, y_colu
     }
 
 
+def build_bland_altman_regression_summary(pair_result: dict) -> pd.DataFrame:
+    regression = pair_result.get("bland_altman_regression")
+    if not regression:
+        return pd.DataFrame()
+    return pd.DataFrame(
+        [
+            {
+                "N": regression["n"],
+                "Slope": regression["slope"],
+                "Intercept": regression["intercept"],
+                "R squared": regression["r_squared"],
+                "P value": regression["p_value"],
+                "Standard error": regression["standard_error"],
+                "Slope 95% CI lower": regression["ci_lower"],
+                "Slope 95% CI upper": regression["ci_upper"],
+                "Formula": regression["formula"],
+            }
+        ]
+    )
+
+
 def build_typical_error_table(wide_frame: pd.DataFrame) -> list[dict]:
     metrics: list[dict] = []
 
@@ -2038,7 +2059,8 @@ def build_pdf_report(analysis_record: dict) -> bytes:
             Paragraph("4. Compute typical error as SD(y − x) / √2.", styles["Normal"]),
             Paragraph("5. Compute minimum detectable change (95%) as typical error × 1.96 × √2.", styles["Normal"]),
             Paragraph("6. Compute bias and limits of agreement as bias ± 1.96 × SD(y − x).", styles["Normal"]),
-            Paragraph("7. Generate square scatter plots with a y = x line and Bland-Altman plots centered symmetrically around 0.", styles["Normal"]),
+            Paragraph("7. Fit least-squares regression of difference on the pair mean and calculate a 95% fitted-mean confidence band.", styles["Normal"]),
+            Paragraph("8. Generate square scatter plots, standard Bland-Altman plots, and regression Bland-Altman plots.", styles["Normal"]),
         ]
     )
 
@@ -2048,6 +2070,7 @@ def build_pdf_report(analysis_record: dict) -> bytes:
         column_summary_frame = pd.DataFrame(pair_result["column_summaries"])
         observation_summary_frame = pd.DataFrame(pair_result["observation_summaries"])
         pair_metrics_frame = pd.DataFrame(pair_result["pair_metrics"])
+        regression_frame = build_bland_altman_regression_summary(pair_result)
 
         pair_frame = pair_source_frame[[pair_result["primary_x_column"], pair_result["primary_y_column"]]].copy()
         scatter_image = figure_to_pdf_image(
@@ -2057,6 +2080,14 @@ def build_pdf_report(analysis_record: dict) -> bytes:
         bland_image = figure_to_pdf_image(
             build_bland_altman_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"], figure_palette),
             width_inches=5.8,
+        )
+        regression_bland_image = (
+            figure_to_pdf_image(
+                build_bland_altman_regression_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"], figure_palette),
+                width_inches=5.8,
+            )
+            if pair_result.get("bland_altman_regression")
+            else None
         )
 
         story.extend(
@@ -2075,6 +2106,8 @@ def build_pdf_report(analysis_record: dict) -> bytes:
                 *[Paragraph(line, styles["Normal"]) for line in pair_metric_value_lines(pair_result)],
                 Paragraph(f"Typical error formula: {pair_result['typical_error_formula']}", styles["Normal"]),
                 Paragraph(f"Minimum detectable change formula: {pair_result['minimum_detectable_change_formula']}", styles["Normal"]),
+                Paragraph("Bland-Altman least-squares regression", styles["Heading2"]),
+                pdf_table(regression_frame) if not regression_frame.empty else Paragraph("Regression unavailable for this pair.", styles["Normal"]),
                 Spacer(1, 0.12 * inch),
                 Paragraph("Overall descriptive summary", styles["Heading2"]),
                 pdf_table(overall_summary_frame),
@@ -2095,6 +2128,8 @@ def build_pdf_report(analysis_record: dict) -> bytes:
                 scatter_image,
                 Spacer(1, 0.12 * inch),
                 bland_image,
+                Spacer(1, 0.12 * inch),
+                *([Spacer(1, 0.12 * inch), regression_bland_image] if regression_bland_image else []),
             ]
         )
 
@@ -2153,7 +2188,8 @@ def build_docx_report(analysis_record: dict) -> bytes:
         "Compute typical error as SD(y − x) / √2.",
         "Compute minimum detectable change (95%) as typical error × 1.96 × √2.",
         "Compute bias and limits of agreement as bias ± 1.96 × SD(y − x).",
-        "Generate square scatter plots with a y = x line and Bland-Altman plots centered symmetrically around 0.",
+        "Fit least-squares regression of difference on the pair mean and calculate a 95% fitted-mean confidence band.",
+        "Generate square scatter plots, standard Bland-Altman plots, and regression Bland-Altman plots.",
     ]:
         document.add_paragraph(step, style="List Number")
 
@@ -2166,6 +2202,7 @@ def build_docx_report(analysis_record: dict) -> bytes:
         column_summary_frame = pd.DataFrame(pair_result["column_summaries"])
         observation_summary_frame = pd.DataFrame(pair_result["observation_summaries"])
         pair_metrics_frame = pd.DataFrame(pair_result["pair_metrics"])
+        regression_frame = build_bland_altman_regression_summary(pair_result)
         pair_frame = pair_source_frame[[pair_result["primary_x_column"], pair_result["primary_y_column"]]].copy()
 
         document.add_heading(f"3.{index} Results for {pair_result['pair_label']}", level=1)
@@ -2191,6 +2228,11 @@ def build_docx_report(analysis_record: dict) -> bytes:
         add_docx_table(document, observation_summary_frame)
         document.add_heading("Typical error and limits of agreement", level=2)
         add_docx_table(document, pair_metrics_frame)
+        document.add_heading("Bland-Altman least-squares regression", level=2)
+        if not regression_frame.empty:
+            add_docx_table(document, regression_frame)
+        else:
+            document.add_paragraph("Regression unavailable for this pair.")
         document.add_heading("Source data used for this pair", level=2)
         add_docx_table(document, pair_source_frame)
 
@@ -2208,6 +2250,14 @@ def build_docx_report(analysis_record: dict) -> bytes:
         document.add_paragraph(f"Bland-Altman plot: {pair_result['pair_label']}")
         document.add_picture(io.BytesIO(bland_png), width=Inches(6.0))
         svg_images.append(bland_svg)
+
+        if pair_result.get("bland_altman_regression"):
+            regression_bland_png, regression_bland_svg = figure_to_docx_assets(
+                build_bland_altman_regression_plot(pair_frame, pair_result["primary_x_column"], pair_result["primary_y_column"], figure_palette)
+            )
+            document.add_paragraph(f"Bland-Altman regression plot: {pair_result['pair_label']}")
+            document.add_picture(io.BytesIO(regression_bland_png), width=Inches(6.0))
+            svg_images.append(regression_bland_svg)
 
     buffer = io.BytesIO()
     document.save(buffer)
@@ -2279,8 +2329,10 @@ def build_markdown_report(analysis_record: dict, base_url: str | None = None) ->
             "minimum_detectable_change_95 = typical_error * 1.96 * sqrt(2)",
             "bias = mean(y - x)",
             "limits_of_agreement = bias ± 1.96 * SD(y - x)",
+            "bland_altman_regression = least-squares regression of (y - x) on mean(x, y) with a 95% fitted-mean confidence band",
             "scatter_plot = square plot with y = x reference line",
             "bland_altman_plot = mean(x, y) vs (y - x), centred symmetrically around 0",
+            "bland_altman_regression_plot = Bland-Altman plot with regression line and shaded 95% confidence band",
             "```",
             "",
             "### Notes on figures",
@@ -2296,6 +2348,7 @@ def build_markdown_report(analysis_record: dict, base_url: str | None = None) ->
         column_summary_frame = pd.DataFrame(pair_result["column_summaries"])
         observation_summary_frame = pd.DataFrame(pair_result["observation_summaries"])
         pair_metrics_frame = pd.DataFrame(pair_result["pair_metrics"])
+        regression_frame = build_bland_altman_regression_summary(pair_result)
         pair_source_frame = build_source_data_frame(upload_record, analysis_record, pair_result)
         scatter_svg = (
             f"{base_url}/plots/{analysis_record['id']}/{pair_result['pair_key']}/scatter.svg"
@@ -2317,6 +2370,16 @@ def build_markdown_report(analysis_record: dict, base_url: str | None = None) ->
             if base_url
             else None
         )
+        regression_bland_svg = (
+            f"{base_url}/plots/{analysis_record['id']}/{pair_result['pair_key']}/bland-altman-regression.svg"
+            if base_url and pair_result.get("bland_altman_regression")
+            else None
+        )
+        regression_bland_pdf = (
+            f"{base_url}/plots/{analysis_record['id']}/{pair_result['pair_key']}/bland-altman-regression.pdf?download=1"
+            if base_url and pair_result.get("bland_altman_regression")
+            else None
+        )
 
         lines.extend(
             [
@@ -2335,6 +2398,10 @@ def build_markdown_report(analysis_record: dict, base_url: str | None = None) ->
                 *[f"- {line}" for line in pair_metric_value_lines(pair_result)],
                 f"- Typical error formula: {pair_result['typical_error_formula']}",
                 f"- Minimum detectable change formula: {pair_result['minimum_detectable_change_formula']}",
+                "",
+                "### Bland-Altman least-squares regression",
+                "",
+                markdown_table(regression_frame) if not regression_frame.empty else "Regression unavailable for this pair.",
                 "",
                 "### Overall descriptive summary",
                 "",
@@ -2374,6 +2441,15 @@ def build_markdown_report(analysis_record: dict, base_url: str | None = None) ->
                     f"![Bland-Altman plot for {pair_result['pair_label']}]({bland_svg})",
                 ]
             )
+            if regression_bland_svg and regression_bland_pdf:
+                lines.extend(
+                    [
+                        f"- [Bland-Altman regression SVG]({regression_bland_svg})",
+                        f"- [Bland-Altman regression PDF]({regression_bland_pdf})",
+                        "",
+                        f"![Bland-Altman regression plot for {pair_result['pair_label']}]({regression_bland_svg})",
+                    ]
+                )
 
     lines.extend(
         [
@@ -2461,7 +2537,8 @@ def build_html_report(analysis_record: dict, base_url: str | None = None) -> str
             "      <li>Compute typical error as SD(y - x) / sqrt(2).</li>",
             "      <li>Compute minimum detectable change (95%) as typical error * 1.96 * sqrt(2).</li>",
             "      <li>Compute bias and limits of agreement as bias ± 1.96 * SD(y - x).</li>",
-            "      <li>Generate square scatter plots with a y = x line and Bland-Altman plots centered symmetrically around 0.</li>",
+            "      <li>Fit least-squares regression of difference on the pair mean and calculate a 95% fitted-mean confidence band.</li>",
+            "      <li>Generate square scatter plots, standard Bland-Altman plots, and regression Bland-Altman plots.</li>",
             "    </ol>",
         ]
     )
@@ -2471,6 +2548,7 @@ def build_html_report(analysis_record: dict, base_url: str | None = None) -> str
         column_summary_frame = pd.DataFrame(pair_result["column_summaries"])
         observation_summary_frame = pd.DataFrame(pair_result["observation_summaries"])
         pair_metrics_frame = pd.DataFrame(pair_result["pair_metrics"])
+        regression_frame = build_bland_altman_regression_summary(pair_result)
         pair_source_frame = build_source_data_frame(upload_record, analysis_record, pair_result)
         scatter_svg = (
             f"{base_url}/plots/{analysis_record['id']}/{pair_result['pair_key']}/scatter.svg"
@@ -2481,6 +2559,16 @@ def build_html_report(analysis_record: dict, base_url: str | None = None) -> str
             f"{base_url}/plots/{analysis_record['id']}/{pair_result['pair_key']}/bland-altman.svg"
             if base_url
             else None
+        )
+        regression_bland_svg = (
+            f"{base_url}/plots/{analysis_record['id']}/{pair_result['pair_key']}/bland-altman-regression.svg"
+            if base_url and pair_result.get("bland_altman_regression")
+            else None
+        )
+        regression_html = (
+            html_table(regression_frame)
+            if not regression_frame.empty
+            else '<p class="report-empty">Regression unavailable for this pair.</p>'
         )
 
         lines.extend(
@@ -2500,6 +2588,8 @@ def build_html_report(analysis_record: dict, base_url: str | None = None) -> str
                 "    </ul>",
                 f"    <p class=\"formula\">Typical error formula: {html.escape(pair_result['typical_error_formula'])}</p>",
                 f"    <p class=\"formula\">Minimum detectable change formula: {html.escape(pair_result['minimum_detectable_change_formula'])}</p>",
+                "    <h3>Bland-Altman least-squares regression</h3>",
+                f"    {regression_html}",
                 "    <h3>Overall descriptive summary</h3>",
                 f"    {html_table(overall_summary_frame)}",
                 "    <h3>Series summaries</h3>",
@@ -2526,9 +2616,20 @@ def build_html_report(analysis_record: dict, base_url: str | None = None) -> str
                     f"        <h4>Bland-Altman plot: {html.escape(pair_result['pair_label'])}</h4>",
                     f"        <img src=\"{html.escape(bland_svg)}\" alt=\"Bland-Altman plot for {html.escape(pair_result['pair_label'])}\">",
                     "      </section>",
-                    "    </div>",
                 ]
             )
+            if regression_bland_svg:
+                lines.extend(
+                    [
+                        '      <section class="plot-card">',
+                        f"        <h4>Bland-Altman regression plot: {html.escape(pair_result['pair_label'])}</h4>",
+                        f"        <img src=\"{html.escape(regression_bland_svg)}\" alt=\"Bland-Altman regression plot for {html.escape(pair_result['pair_label'])}\">",
+                        "      </section>",
+                        "    </div>",
+                    ]
+                )
+            else:
+                lines.append("    </div>")
 
     lines.extend(
         [
@@ -2641,6 +2742,87 @@ def build_bland_altman_plot(
     return figure
 
 
+def build_bland_altman_regression_plot(
+    dataframe: pd.DataFrame,
+    x_column: str,
+    y_column: str,
+    palette_key: str = DEFAULT_FIGURE_PALETTE,
+) -> plt.Figure:
+    pair_frame = dataframe[[x_column, y_column]].dropna().astype(float)
+    means = ((pair_frame[x_column] + pair_frame[y_column]) / 2).to_numpy()
+    differences = (pair_frame[y_column] - pair_frame[x_column]).to_numpy()
+    regression = build_bland_altman_regression(
+        pair_frame,
+        x_column,
+        y_column,
+    )
+    if regression is None:
+        raise AnalysisError("At least three non-constant observations are required for Bland-Altman regression.")
+
+    slope = regression["slope"]
+    intercept = regression["intercept"]
+    x_grid = np.linspace(float(np.min(means)), float(np.max(means)), 200)
+    fit_line = intercept + slope * x_grid
+    residuals = differences - (intercept + slope * means)
+    degrees_of_freedom = len(means) - 2
+    residual_standard_error = np.sqrt(np.sum(residuals**2) / degrees_of_freedom)
+    x_mean = float(np.mean(means))
+    sum_squared_x = float(np.sum((means - x_mean) ** 2))
+    t_critical = stats.t.ppf(0.975, df=degrees_of_freedom)
+    confidence_margin = t_critical * residual_standard_error * np.sqrt(
+        (1 / len(means)) + ((x_grid - x_mean) ** 2 / sum_squared_x)
+    )
+    lower_band = fit_line - confidence_margin
+    upper_band = fit_line + confidence_margin
+
+    palette = get_figure_palette(palette_key)
+    bias = float(np.mean(differences))
+    sd_difference = float(np.std(differences, ddof=1)) if len(differences) > 1 else 0.0
+    loa_upper = bias + 1.96 * sd_difference
+    loa_lower = bias - 1.96 * sd_difference
+    max_extent = max(
+        abs(bias),
+        abs(loa_upper),
+        abs(loa_lower),
+        float(np.max(np.abs(differences))),
+        float(np.max(np.abs(lower_band))),
+        float(np.max(np.abs(upper_band))),
+        0.1,
+    )
+
+    figure, axis = plt.subplots(figsize=(7, 5.5))
+    axis.scatter(means, differences, color=palette["bland_points"], edgecolors="white", linewidths=0.8, s=55)
+    axis.fill_between(
+        x_grid,
+        lower_band,
+        upper_band,
+        color=palette["regression_band"],
+        alpha=0.18,
+        label="95% CI of fitted mean difference",
+        zorder=1,
+    )
+    axis.plot(
+        x_grid,
+        fit_line,
+        color=palette["regression_line"],
+        linewidth=1.8,
+        label=f"Regression: difference = {slope:.3f} mean {intercept:+.3f}",
+        zorder=2,
+    )
+    axis.axhline(0, color=palette["zero_line"], linewidth=1.1)
+    axis.axhline(bias, color=palette["bias_line"], linestyle="-", linewidth=1.6, label=f"Bias = {bias:.3f}")
+    axis.axhline(loa_upper, color=palette["loa_line"], linestyle="--", linewidth=1.4, label=f"Upper LoA = {loa_upper:.3f}")
+    axis.axhline(loa_lower, color=palette["loa_line"], linestyle="--", linewidth=1.4, label=f"Lower LoA = {loa_lower:.3f}")
+    axis.set_ylim(-max_extent * 1.1, max_extent * 1.1)
+    axis.set_xlabel(f"Mean of {x_column} and {y_column}")
+    axis.set_ylabel(f"Difference ({y_column} - {x_column})")
+    axis.set_title(f"Bland-Altman regression: {x_column} vs {y_column}")
+    axis.legend(loc="upper right")
+    axis.grid(alpha=0.25)
+    figure.tight_layout()
+    return figure
+
+
 def build_plot_response(analysis_record: dict, pair_key: str, plot_kind: str, file_format: str, download: bool):
     if file_format not in {"svg", "pdf"}:
         abort(404)
@@ -2664,6 +2846,8 @@ def build_plot_response(analysis_record: dict, pair_key: str, plot_kind: str, fi
         figure = build_scatter_plot(wide_frame, x_column, y_column, figure_palette)
     elif plot_kind == "bland-altman":
         figure = build_bland_altman_plot(wide_frame, x_column, y_column, figure_palette)
+    elif plot_kind == "bland-altman-regression":
+        figure = build_bland_altman_regression_plot(wide_frame, x_column, y_column, figure_palette)
     else:
         abort(404)
 

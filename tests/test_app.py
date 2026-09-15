@@ -13,6 +13,7 @@ from app import (
     app,
     analyse_long_dataset,
     build_bland_altman_plot,
+    build_bland_altman_regression_plot,
     build_explicit_pair_definitions,
     build_html_report,
     build_long_measurement_options,
@@ -138,6 +139,22 @@ class ReliabilityAppTests(unittest.TestCase):
         lower, upper = axis.get_ylim()
 
         self.assertAlmostEqual(abs(lower), abs(upper), places=6)
+
+    def test_bland_altman_regression_plot_includes_line_and_confidence_band(self) -> None:
+        dataframe = pd.DataFrame(
+            {
+                "Test 1": [8.0, 9.5, 11.0, 12.5, 14.0],
+                "Test 2": [8.4, 9.2, 10.8, 12.9, 14.3],
+            }
+        )
+
+        figure = build_bland_altman_regression_plot(dataframe, "Test 1", "Test 2")
+        self.addCleanup(plt.close, figure)
+        axis = figure.axes[0]
+
+        self.assertTrue(any(isinstance(collection, PolyCollection) for collection in axis.collections))
+        self.assertTrue(any("Regression:" in line.get_label() for line in axis.lines))
+        self.assertTrue(any("95% CI" in collection.get_label() for collection in axis.collections))
 
     def test_typical_error_table_includes_mdc_95(self) -> None:
         dataframe = pd.DataFrame(
