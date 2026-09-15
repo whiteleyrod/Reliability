@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+import base64
 import zipfile
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -1858,6 +1859,13 @@ def figure_to_bytes(figure: plt.Figure, file_format: str) -> bytes:
     return buffer.getvalue()
 
 
+def figure_to_inline_svg(figure: plt.Figure) -> str:
+    svg_bytes = figure_to_bytes(figure, "svg")
+    plt.close(figure)
+    encoded_svg = base64.b64encode(svg_bytes).decode("ascii")
+    return f"data:image/svg+xml;base64,{encoded_svg}"
+
+
 def figure_to_docx_assets(figure: plt.Figure) -> tuple[bytes, bytes]:
     png_bytes = figure_to_bytes(figure, "png")
     svg_bytes = figure_to_bytes(figure, "svg")
@@ -2497,6 +2505,11 @@ def build_html_report(analysis_record: dict, base_url: str | None = None) -> str
         "    .plot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin-top: 16px; }",
         "    .plot-card { border: 1px solid #cbd5e1; border-radius: 14px; padding: 14px; background: #f8fafc; }",
         "    .plot-card img { width: 100%; height: auto; display: block; background: #fff; }",
+        "    details { margin: 14px 0; border: 1px solid #cbd5e1; border-radius: 10px; background: #ffffff; }",
+        "    details details { margin: 10px 14px; background: #f8fafc; }",
+        "    summary { cursor: pointer; padding: 12px 14px; font-weight: 700; color: #1e3a8a; }",
+        "    details > :not(summary) { margin-left: 14px; margin-right: 14px; }",
+        "    details > .plot-grid { margin-bottom: 16px; }",
         "    pre, code { background: #e2e8f0; border-radius: 8px; }",
         "    pre { padding: 14px; overflow-x: auto; }",
         "  </style>",
@@ -2505,13 +2518,16 @@ def build_html_report(analysis_record: dict, base_url: str | None = None) -> str
         "  <main>",
         "    <h1>Reliability Analysis Report</h1>",
         f"    <p>Generated: {html.escape(datetime.now().isoformat(timespec='seconds'))}</p>",
-        "    <h2>Analysed source data</h2>",
-        f"    <p>Source file: {html.escape(upload_record['original_filename'])}</p>",
-        f"    <p>Worksheet: {html.escape(config['selected_sheet'])}</p>",
-        f"    <p>Selected pairs: {html.escape(selected_pairs)}</p>",
-        f"    <p>Observation identifier: {html.escape(config.get('subject_column') or 'Generated row labels')}</p>",
-        f"    {html_table(source_frame)}",
-        "    <h2>Analysis description</h2>",
+        "    <details open>",
+        "      <summary>Analysed source data</summary>",
+        f"      <p>Source file: {html.escape(upload_record['original_filename'])}</p>",
+        f"      <p>Worksheet: {html.escape(config['selected_sheet'])}</p>",
+        f"      <p>Selected pairs: {html.escape(selected_pairs)}</p>",
+        f"      <p>Observation identifier: {html.escape(config.get('subject_column') or 'Generated row labels')}</p>",
+        f"      {html_table(source_frame)}",
+        "    </details>",
+        "    <details open>",
+        "      <summary>Analysis description</summary>",
         "    <ul class=\"meta-list\">",
         f"      <li>Study design: {html.escape(analysis_record['recommendation']['design_label'])}</li>",
         f"      <li>Agreement target: {html.escape(analysis_record['recommendation']['agreement_label'])}</li>",
@@ -2519,27 +2535,32 @@ def build_html_report(analysis_record: dict, base_url: str | None = None) -> str
         f"      <li>Rationale: {html.escape(analysis_record['recommendation']['rationale'])}</li>",
         f"      <li>Analysed pairs: {analysis_record['dataset_summary']['pair_count']}</li>",
         f"      <li>Source rows: {analysis_record['dataset_summary']['source_rows']}</li>",
-        "    </ul>",
-        "    <h3>Python packages used</h3>",
-        "    <ul class=\"meta-list\">",
+        "      </ul>",
+        "      <details>",
+        "        <summary>Python packages used</summary>",
+        "        <ul class=\"meta-list\">",
     ]
 
-    lines.extend([f"      <li>{html.escape(package)}</li>" for package in package_versions])
+    lines.extend([f"          <li>{html.escape(package)}</li>" for package in package_versions])
     lines.extend(
         [
-            "    </ul>",
-            "    <h3>Commands and analysis steps used</h3>",
-            "    <pre><code>python app.py\npython run_web.py</code></pre>",
-            "    <ol>",
-            "      <li>Load the worksheet and selected columns.</li>",
-            "      <li>Drop rows with missing values for each selected pair.</li>",
-            "      <li>Reshape the pair data and run pingouin.intraclass_corr(...).</li>",
-            "      <li>Compute typical error as SD(y - x) / sqrt(2).</li>",
-            "      <li>Compute minimum detectable change (95%) as typical error * 1.96 * sqrt(2).</li>",
-            "      <li>Compute bias and limits of agreement as bias ± 1.96 * SD(y - x).</li>",
-            "      <li>Fit least-squares regression of difference on the pair mean and calculate a 95% fitted-mean confidence band.</li>",
-            "      <li>Generate square scatter plots, standard Bland-Altman plots, and regression Bland-Altman plots.</li>",
-            "    </ol>",
+            "        </ul>",
+            "      </details>",
+            "      <details>",
+            "        <summary>Commands and analysis steps used</summary>",
+            "        <pre><code>python app.py\npython run_web.py</code></pre>",
+            "        <ol>",
+            "          <li>Load the worksheet and selected columns.</li>",
+            "          <li>Drop rows with missing values for each selected pair.</li>",
+            "          <li>Reshape the pair data and run pingouin.intraclass_corr(...).</li>",
+            "          <li>Compute typical error as SD(y - x) / sqrt(2).</li>",
+            "          <li>Compute minimum detectable change (95%) as typical error * 1.96 * sqrt(2).</li>",
+            "          <li>Compute bias and limits of agreement as bias ± 1.96 * SD(y - x).</li>",
+            "          <li>Fit least-squares regression of difference on the pair mean and calculate a 95% fitted-mean confidence band.</li>",
+            "          <li>Generate square scatter plots, standard Bland-Altman plots, and regression Bland-Altman plots.</li>",
+            "        </ol>",
+            "      </details>",
+            "    </details>",
         ]
     )
 
@@ -2550,19 +2571,33 @@ def build_html_report(analysis_record: dict, base_url: str | None = None) -> str
         pair_metrics_frame = pd.DataFrame(pair_result["pair_metrics"])
         regression_frame = build_bland_altman_regression_summary(pair_result)
         pair_source_frame = build_source_data_frame(upload_record, analysis_record, pair_result)
-        scatter_svg = (
-            f"{base_url}/plots/{analysis_record['id']}/{pair_result['pair_key']}/scatter.svg"
-            if base_url
-            else None
+        pair_frame = pair_source_frame[[pair_result["primary_x_column"], pair_result["primary_y_column"]]].copy()
+        scatter_svg = figure_to_inline_svg(
+            build_scatter_plot(
+                pair_frame,
+                pair_result["primary_x_column"],
+                pair_result["primary_y_column"],
+                config.get("figure_palette", DEFAULT_FIGURE_PALETTE),
+            )
         )
-        bland_svg = (
-            f"{base_url}/plots/{analysis_record['id']}/{pair_result['pair_key']}/bland-altman.svg"
-            if base_url
-            else None
+        bland_svg = figure_to_inline_svg(
+            build_bland_altman_plot(
+                pair_frame,
+                pair_result["primary_x_column"],
+                pair_result["primary_y_column"],
+                config.get("figure_palette", DEFAULT_FIGURE_PALETTE),
+            )
         )
         regression_bland_svg = (
-            f"{base_url}/plots/{analysis_record['id']}/{pair_result['pair_key']}/bland-altman-regression.svg"
-            if base_url and pair_result.get("bland_altman_regression")
+            figure_to_inline_svg(
+                build_bland_altman_regression_plot(
+                    pair_frame,
+                    pair_result["primary_x_column"],
+                    pair_result["primary_y_column"],
+                    config.get("figure_palette", DEFAULT_FIGURE_PALETTE),
+                )
+            )
+            if pair_result.get("bland_altman_regression")
             else None
         )
         regression_html = (
@@ -2573,7 +2608,8 @@ def build_html_report(analysis_record: dict, base_url: str | None = None) -> str
 
         lines.extend(
             [
-                f"    <h2>Results for pair: {html.escape(pair_result['pair_label'])}</h2>",
+                "    <details open>",
+                f"      <summary>Results for pair: {html.escape(pair_result['pair_label'])}</summary>",
                 "    <ul class=\"meta-list\">",
                 f"      <li>Columns: {html.escape(pair_result['primary_x_column'])} vs {html.escape(pair_result['primary_y_column'])}</li>",
                 f"      <li>ICC model: {html.escape(pair_result['icc_result']['model'])}</li>",
@@ -2588,57 +2624,74 @@ def build_html_report(analysis_record: dict, base_url: str | None = None) -> str
                 "    </ul>",
                 f"    <p class=\"formula\">Typical error formula: {html.escape(pair_result['typical_error_formula'])}</p>",
                 f"    <p class=\"formula\">Minimum detectable change formula: {html.escape(pair_result['minimum_detectable_change_formula'])}</p>",
-                "    <h3>Bland-Altman least-squares regression</h3>",
-                f"    {regression_html}",
-                "    <h3>Overall descriptive summary</h3>",
-                f"    {html_table(overall_summary_frame)}",
-                "    <h3>Series summaries</h3>",
-                f"    {html_table(column_summary_frame)}",
-                "    <h3>Observation summaries</h3>",
-                f"    {html_table(observation_summary_frame)}",
-                "    <h3>Typical error, minimum detectable change, and limits of agreement</h3>",
-                f"    {html_table(pair_metrics_frame)}",
-                "    <h3>Source data used for this pair</h3>",
-                f"    {html_table(pair_source_frame)}",
+                "      <details>",
+                "        <summary>Bland-Altman least-squares regression</summary>",
+                f"        {regression_html}",
+                "      </details>",
+                "      <details>",
+                "        <summary>Overall descriptive summary</summary>",
+                f"        {html_table(overall_summary_frame)}",
+                "      </details>",
+                "      <details>",
+                "        <summary>Series summaries</summary>",
+                f"        {html_table(column_summary_frame)}",
+                "      </details>",
+                "      <details>",
+                "        <summary>Observation summaries</summary>",
+                f"        {html_table(observation_summary_frame)}",
+                "      </details>",
+                "      <details>",
+                "        <summary>Typical error, minimum detectable change, and limits of agreement</summary>",
+                f"        {html_table(pair_metrics_frame)}",
+                "      </details>",
+                "      <details>",
+                "        <summary>Source data used for this pair</summary>",
+                f"        {html_table(pair_source_frame)}",
+                "      </details>",
             ]
         )
 
         if scatter_svg and bland_svg:
             lines.extend(
                 [
-                    "    <h3>Figures</h3>",
-                    '    <div class="plot-grid">',
-                    '      <section class="plot-card">',
-                    f"        <h4>Scatter plot: {html.escape(pair_result['pair_label'])}</h4>",
-                    f"        <img src=\"{html.escape(scatter_svg)}\" alt=\"Scatter plot for {html.escape(pair_result['pair_label'])}\">",
-                    "      </section>",
-                    '      <section class="plot-card">',
-                    f"        <h4>Bland-Altman plot: {html.escape(pair_result['pair_label'])}</h4>",
-                    f"        <img src=\"{html.escape(bland_svg)}\" alt=\"Bland-Altman plot for {html.escape(pair_result['pair_label'])}\">",
-                    "      </section>",
+                    "      <details>",
+                    "        <summary>Figures</summary>",
+                    '        <div class="plot-grid">',
+                    '          <section class="plot-card">',
+                    f"            <h4>Scatter plot: {html.escape(pair_result['pair_label'])}</h4>",
+                    f"            <img src=\"{html.escape(scatter_svg)}\" alt=\"Scatter plot for {html.escape(pair_result['pair_label'])}\">",
+                    "          </section>",
+                    '          <section class="plot-card">',
+                    f"            <h4>Bland-Altman plot: {html.escape(pair_result['pair_label'])}</h4>",
+                    f"            <img src=\"{html.escape(bland_svg)}\" alt=\"Bland-Altman plot for {html.escape(pair_result['pair_label'])}\">",
+                    "          </section>",
                 ]
             )
             if regression_bland_svg:
                 lines.extend(
                     [
-                        '      <section class="plot-card">',
-                        f"        <h4>Bland-Altman regression plot: {html.escape(pair_result['pair_label'])}</h4>",
-                        f"        <img src=\"{html.escape(regression_bland_svg)}\" alt=\"Bland-Altman regression plot for {html.escape(pair_result['pair_label'])}\">",
-                        "      </section>",
-                        "    </div>",
+                        '          <section class="plot-card">',
+                        f"            <h4>Bland-Altman regression plot: {html.escape(pair_result['pair_label'])}</h4>",
+                        f"            <img src=\"{html.escape(regression_bland_svg)}\" alt=\"Bland-Altman regression plot for {html.escape(pair_result['pair_label'])}\">",
+                        "          </section>",
+                        "        </div>",
+                        "      </details>",
                     ]
                 )
             else:
-                lines.append("    </div>")
+                lines.extend(["        </div>", "      </details>"])
+            lines.append("    </details>")
 
     lines.extend(
         [
-            "    <h2>Notes</h2>",
-            '    <ul class="meta-list">',
-            "      <li>This report includes the analysed source rows after pair-specific missing-value filtering.</li>",
-            "      <li>This HTML report combines the analysed data, analysis description, results, and figure embeds in one file.</li>",
-            "      <li>Full implementation source code is not embedded, but the commands and package set used by the app are listed above.</li>",
-            "    </ul>",
+            "    <details>",
+            "      <summary>Notes</summary>",
+            '      <ul class="meta-list">',
+            "        <li>This report includes the analysed source rows after pair-specific missing-value filtering.</li>",
+            "        <li>This HTML report combines the analysed data, analysis description, results, and inline SVG figures in one file.</li>",
+            "        <li>Full implementation source code is not embedded, but the commands and package set used by the app are listed above.</li>",
+            "      </ul>",
+            "    </details>",
             "  </main>",
             "</body>",
             "</html>",

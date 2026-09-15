@@ -457,7 +457,9 @@ class ReliabilityAppTests(unittest.TestCase):
         self.assertIn("Typical error: 0.2", report)
         self.assertIn("Minimum detectable change (95%): 0.5544", report)
         self.assertIn("Minimum detectable change formula", report)
-        self.assertIn("/plots/analysis-test-html/pair-1/scatter.svg", report)
+        self.assertIn("data:image/svg+xml;base64,", report)
+        self.assertIn("<details", report)
+        self.assertIn("<summary>Figures</summary>", report)
         self.assertIn("reliability Analysis Report".lower(), report.lower())
 
     def test_build_markdown_report_includes_metric_values(self) -> None:
