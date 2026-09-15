@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 import pingouin as pg
 from docx import Document
+from scipy import stats
 from docx.shared import Inches
 from flask import Flask, abort, redirect, render_template, request, send_file, url_for
 from reportlab.lib import colors
@@ -1050,6 +1051,42 @@ def prepare_analysis_frame(
     }
 
 
+def build_bland_altman_regression(dataframe: pd.DataFrame, x_column: str, y_column: str) -> dict | None:
+    pair_frame = dataframe[[x_column, y_column]].copy()
+    pair_frame = pair_frame.dropna(subset=[x_column, y_column])
+
+    if pair_frame.empty:
+        return None
+
+    pair_frame = pair_frame.astype(float)
+    means = (pair_frame[x_column] + pair_frame[y_column]) / 2.0
+    differences = pair_frame[y_column] - pair_frame[x_column]
+
+    if len(means) < 3 or np.allclose(means.to_numpy(), means.iloc[0]):
+        return None
+
+    slope, intercept, r_value, p_value, stderr = stats.linregress(means.to_numpy(), differences.to_numpy())
+    degrees_of_freedom = len(means) - 2
+    if degrees_of_freedom <= 0:
+        return None
+
+    t_critical = stats.t.ppf(0.975, df=degrees_of_freedom)
+    slope_ci_lower = slope - (t_critical * stderr)
+    slope_ci_upper = slope + (t_critical * stderr)
+
+    return {
+        "slope": float(slope),
+        "intercept": float(intercept),
+        "r_squared": float(r_value**2),
+        "p_value": float(p_value),
+        "standard_error": float(stderr),
+        "ci_lower": float(slope_ci_lower),
+        "ci_upper": float(slope_ci_upper),
+        "formula": f"Difference = {slope:.6f} × Mean + {intercept:.6f}",
+        "n": int(len(means)),
+    }
+
+
 def build_typical_error_table(wide_frame: pd.DataFrame) -> list[dict]:
     metrics: list[dict] = []
 
@@ -1295,6 +1332,11 @@ def analyse_pair_result(
     column_summaries = build_column_summaries(wide_frame, measurement_columns)
     observation_summaries, observation_total = build_observation_summaries(wide_frame, subject_labels)
     pair_metrics = build_typical_error_table(wide_frame)
+    bland_altman_regression = build_bland_altman_regression(
+        wide_frame,
+        pair_definition["primary_x_column"],
+        pair_definition["primary_y_column"],
+    )
 
     return {
         "pair_key": pair_definition["pair_key"],
@@ -1326,6 +1368,7 @@ def analyse_pair_result(
         "observation_summaries": observation_summaries,
         "observation_total": observation_total,
         "pair_metrics": pair_metrics,
+        "bland_altman_regression": bland_altman_regression,
         "typical_error_formula": "Typical error = SD(differences) / √2",
         "minimum_detectable_change_formula": "Minimum detectable change (95%) = Typical error × 1.96 × √2",
     }

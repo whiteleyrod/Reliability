@@ -272,6 +272,25 @@ def render_pair_section(upload_record: dict, analysis_record: dict, pair_result:
     with st.expander("Typical error, minimum detectable change, and limits of agreement", expanded=True):
         st.dataframe(pd.DataFrame(pair_result["pair_metrics"]), use_container_width=True)
 
+    regression = pair_result.get("bland_altman_regression")
+    if regression:
+        regression_frame = pd.DataFrame(
+            [
+                {
+                    "Slope": regression["slope"],
+                    "Intercept": regression["intercept"],
+                    "R²": regression["r_squared"],
+                    "P value": regression["p_value"],
+                    "SE": regression["standard_error"],
+                    "95% CI lower": regression["ci_lower"],
+                    "95% CI upper": regression["ci_upper"],
+                    "Formula": regression["formula"],
+                }
+            ]
+        )
+        st.markdown("#### Least-squares regression of Bland-Altman data")
+        st.dataframe(regression_frame, use_container_width=True)
+
     pair_source_frame = build_source_data_frame(upload_record, analysis_record, pair_result)
     pair_frame = pair_source_frame[[pair_result["primary_x_column"], pair_result["primary_y_column"]]].copy()
 
